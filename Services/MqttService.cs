@@ -23,6 +23,7 @@ public class MqttService
         _configuration = configuration;
         _logger = logger;
         _sensorUniqIds = new Dictionary<string, string>();
+        _sensors = new List<Sensor>();
 
         // Safely read broker & port
         var broker = configuration["Mqtt:Broker"];
@@ -260,9 +261,9 @@ public class MqttService
 
             // Subscribe to the sensor's state topic
             await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
-        {
-            new MqttTopicFilterBuilder().WithTopic(deviceConfig.StatT).Build()
-        });
+            {
+                new MqttTopicFilterBuilder().WithTopic(deviceConfig.StatT).Build()
+            });
             _logger.LogInformation($"Subscribed to sensor state topic: {deviceConfig.StatT}");
         }
         catch (Exception ex)
@@ -359,7 +360,7 @@ public class MqttService
     {
         try
         {
-            _logger.LogInformation($"Preparing to send data for sensor {uniqId} to API with key: {key} and value: {value}");
+            _logger.LogInformation($"Preparing to send data for sensor {uniqId} to API with key: {key}");
 
             var token = await GetJwtTokenAsync();
             var client = _httpClientFactory.CreateClient();
@@ -405,7 +406,7 @@ public class MqttService
             }
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            _logger.LogInformation($"JWT token response: {responseContent}");
+            _logger.LogInformation("Successfully retrieved JWT token.");
 
             var tokenResponse = JsonSerializer.Deserialize<JwtTokenResponse>(responseContent);
             if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.Token))
