@@ -182,7 +182,8 @@ public class MqttService
                             var value = kvp.Value?.ToString();
                             if (value != null)
                             {
-                                if (_sensorUniqIds.TryGetValue(sensorName, out var uniqId))
+                                var sensorKey = $"{sensorName}_{key}";
+                                if (_sensorUniqIds.TryGetValue(sensorKey, out var uniqId))
                                 {
                                     // Check if the key matches the dev_cla
                                     var sensor = _sensors.FirstOrDefault(s => s.Name == uniqId);
@@ -198,7 +199,7 @@ public class MqttService
                                 }
                                 else
                                 {
-                                    _logger.LogWarning($"No uniq_id found for sensor {sensorName}");
+                                    _logger.LogWarning($"No uniq_id found for sensor {sensorKey}");
                                 }
                             }
                             else
@@ -250,12 +251,9 @@ public class MqttService
                 }
             }
 
-            // Extract the base sensor name by removing the last part after the underscore
-            var baseSensorName = deviceConfig.UniqId.Substring(0, deviceConfig.UniqId.LastIndexOf('_'));
-
-            // Store the uniq_id for the sensor
-            _sensorUniqIds[baseSensorName] = deviceConfig.UniqId;
-            _logger.LogInformation($"Stored uniq_id for sensor {baseSensorName}: {deviceConfig.UniqId}");
+            // Store the uniq_id for the sensor type
+            _sensorUniqIds[deviceConfig.UniqId] = deviceConfig.UniqId;
+            _logger.LogInformation($"Stored uniq_id for sensor {deviceConfig.UniqId}");
 
             // Log the current uniq_id mappings for debugging
             _logger.LogInformation("Current uniq_id mappings: " + string.Join(", ", _sensorUniqIds.Select(kvp => $"{kvp.Key}: {kvp.Value}")));
