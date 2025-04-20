@@ -15,7 +15,9 @@ public class MqttService
     private readonly ILogger<MqttService> _logger;
     private readonly string _apiBaseUrl;
     private List<Sensor> _sensors;
+    private List<Switch> _switches;
     private Dictionary<string, string> _sensorUniqIds;
+    private Dictionary<string, string> _switchUniqIds;
 
     public MqttService(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<MqttService> logger)
     {
@@ -23,7 +25,9 @@ public class MqttService
         _configuration = configuration;
         _logger = logger;
         _sensorUniqIds = new Dictionary<string, string>();
+        _switchUniqIds = new Dictionary<string, string>();
         _sensors = new List<Sensor>();
+        _switches = new List<Switch>();
 
         // Safely read broker & port
         var broker = configuration["Mqtt:Broker"];
@@ -82,6 +86,9 @@ public class MqttService
 
         // Get all sensors from the API
         _sensors = await GetAllSensorsAsync(token);
+
+        // Get all switches from the API
+        _switches = await GetAllSwitchesAsync(token);
 
         // Subscribe to the message received event
         _mqttClient.ApplicationMessageReceivedAsync += HandleReceivedMessage;
@@ -154,71 +161,104 @@ public class MqttService
             var payload = payloadSegment.Array;
             var json = Encoding.UTF8.GetString(payload, payloadSegment.Offset, payloadSegment.Count);
 
-            // Log the received JSON payload
-            _logger.LogInformation($"Received JSON payload: {json}");
+            // Log the received payload
+            _logger.LogInformation($"Received payload: {json}");
 
             // Check if the message is a device config
             if (e.ApplicationMessage.Topic.StartsWith("homeassistant/") && e.ApplicationMessage.Topic.EndsWith("/config"))
             {
-                var deviceConfig = JsonSerializer.Deserialize<DeviceConfig>(json);
-                if (deviceConfig != null)
+                if (e.ApplicationMessage.Topic.Contains("/switch/"))
                 {
-                    await HandleDeviceConfig(deviceConfig);
-                }
-            }
-            else
-            {
-                // Handle sensor data
-                var sensorData = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
-                var topicParts = e.ApplicationMessage.Topic.Split('/');
-                if (topicParts.Length >= 3)
-                {
-                    var sensorName = topicParts[2];
-
-                    if (sensorData != null)
+                    var switchConfig = JsonSerializer.Deserialize<SwitchConfig>(json);
+                    if (switchConfig != null)
                     {
-                        foreach (var kvp in sensorData)
-                        {
-                            var key = kvp.Key;
-                            var value = kvp.Value?.ToString();
-                            if (value != null)
-                            {
-                                var sensorKey = $"{sensorName}_{key}";
-                                if (_sensorUniqIds.TryGetValue(sensorKey, out var uniqId))
-                                {
-                                    // Check if the key matches the dev_cla
-                                    var sensor = _sensors.FirstOrDefault(s => s.Name == uniqId);
-                                    if (sensor != null && key.Equals(sensor.Type, StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        _logger.LogInformation($"Sending data to API for sensor {uniqId} with key: {key} and value: {value}");
-                                        await SendDataToApi(uniqId, key, value);
-                                    }
-                                    else
-                                    {
-                                        _logger.LogWarning($"Key {key} does not match the sensor type {sensor?.Type} for sensor {uniqId}");
-                                    }
-                                }
-                                else
-                                {
-                                    _logger.LogWarning($"No uniq_id found for sensor {sensorKey}");
-                                }
-                            }
-                            else
-                            {
-                                _logger.LogWarning($"Value for {key} is null or empty.");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Sensor data is null.");
+                        await HandleSwitchConfig(switchConfig);
                     }
                 }
                 else
                 {
-                    _logger.LogWarning("Topic does not contain enough parts to extract sensor name.");
+                    var sensorConfig = JsonSerializer.Deserialize<SensorConfig>(json);
+                    if (sensorConfig != null)
+                    {
+                        await HandleSensorConfig(sensorConfig);
+                    }
                 }
             }
+            else
+            {
+                // Handle sensor or switch data
+                var topicParts = e.ApplicationMessage.Topic.Split('/');
+                if (topicParts.Length >= 3)
+                {
+                    var deviceName = topicParts[2];
+
+                    // Check if the payload is a plain string (e.g., "ON" or "OFF")
+                    if (json.Equals("ON", StringComparison.OrdinalIgnoreCase) || json.Equals("OFF", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Handle switch state
+                        if (_switchUniqIds.TryGetValue(deviceName, out var switchUniqId))
+                        {
+                            _logger.LogInformation($"Sending switch state to API for switch {switchUniqId} with value: {json}");
+                            await SendSwitchDataToApi(switchUniqId, "state", json);
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"No uniq_id found for switch {deviceName}");
+                        }
+                    }
+                    else
+                    {
+                        // Assume the payload is a JSON object and handle sensor data
+                        var data = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+                        if (data != null)
+                        {
+                            foreach (var kvp in data)
+                            {
+                                var key = kvp.Key;
+                                var value = kvp.Value?.ToString();
+                                if (value != null)
+                                {
+                                    var deviceKey = $"{deviceName}_{key}";
+                                    if (_sensorUniqIds.TryGetValue(deviceKey, out var uniqId))
+                                    {
+                                        // Handle sensor data
+                                        var sensor = _sensors.FirstOrDefault(s => s.Name == uniqId);
+                                        if (sensor != null && key.Equals(sensor.Type, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            _logger.LogInformation($"Sending data to API for sensor {uniqId} with key: {key} and value: {value}");
+                                            await SendDataToApi(uniqId, key, value);
+                                        }
+                                        else
+                                        {
+                                            _logger.LogWarning($"Key {key} does not match the sensor type {sensor?.Type} for sensor {uniqId}");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning($"No uniq_id found for device {deviceKey}");
+                                    }
+                                }
+                                else
+                                {
+                                    _logger.LogWarning($"Value for {key} is null or empty.");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Device data is null.");
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Topic does not contain enough parts to extract device name.");
+                }
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Error deserializing JSON payload.");
         }
         catch (Exception ex)
         {
@@ -226,7 +266,7 @@ public class MqttService
         }
     }
 
-    private async Task HandleDeviceConfig(DeviceConfig deviceConfig)
+    private async Task HandleSensorConfig(SensorConfig sensorConfig)
     {
         try
         {
@@ -234,14 +274,14 @@ public class MqttService
             _logger.LogInformation("Current sensors: " + string.Join(", ", _sensors.Select(s => s.Name)));
 
             // Check if the sensor exists in the list
-            var sensorExists = _sensors.Any(s => s.Name == deviceConfig.UniqId);
+            var sensorExists = _sensors.Any(s => s.Name == sensorConfig.UniqId);
             if (!sensorExists)
             {
                 // Create a new sensor
                 var createSensorData = new Sensor
                 {
-                    Name = deviceConfig.UniqId,
-                    Type = deviceConfig.DevCla
+                    Name = sensorConfig.UniqId,
+                    Type = sensorConfig.DevCla
                 };
                 var created = await TryCreateSensor(createSensorData);
 
@@ -253,8 +293,8 @@ public class MqttService
             }
 
             // Store the uniq_id for the sensor type
-            _sensorUniqIds[deviceConfig.UniqId] = deviceConfig.UniqId;
-            _logger.LogInformation($"Stored uniq_id for sensor {deviceConfig.UniqId}");
+            _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
+            _logger.LogInformation($"Stored uniq_id for sensor {sensorConfig.UniqId}");
 
             // Log the current uniq_id mappings for debugging
             _logger.LogInformation("Current uniq_id mappings: " + string.Join(", ", _sensorUniqIds.Select(kvp => $"{kvp.Key}: {kvp.Value}")));
@@ -262,13 +302,56 @@ public class MqttService
             // Subscribe to the sensor's state topic
             await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
             {
-                new MqttTopicFilterBuilder().WithTopic(deviceConfig.StatT).Build()
+                new MqttTopicFilterBuilder().WithTopic(sensorConfig.StatT).Build()
             });
-            _logger.LogInformation($"Subscribed to sensor state topic: {deviceConfig.StatT}");
+            _logger.LogInformation($"Subscribed to sensor state topic: {sensorConfig.StatT}");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling device config.");
+        }
+    }
+
+    private async Task HandleSwitchConfig(SwitchConfig switchConfig)
+    {
+        try
+        {
+            // Log the current switches for debugging
+            _logger.LogInformation("Current switches: " + string.Join(", ", _switches.Select(s => s.Name)));
+
+            // Check if the switch exists in the list
+            var switchExists = _switches.Any(s => s.Name == switchConfig.UniqId);
+            if (!switchExists)
+            {
+                // Create a new switch
+                var createSwitchData = new Switch
+                {
+                    Name = switchConfig.UniqId,
+                    Type = "switch" // Assuming type is "switch"
+                };
+                var created = await TryCreateSwitch(createSwitchData);
+
+                if (created)
+                {
+                    // Add the new switch to the list
+                    _switches.Add(createSwitchData);
+                }
+            }
+
+            // Store the uniq_id for the switch
+            _switchUniqIds[switchConfig.UniqId] = switchConfig.UniqId;
+            _logger.LogInformation($"Stored uniq_id for switch {switchConfig.UniqId}");
+
+            // Subscribe to the switch's state topic
+            await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
+            {
+                new MqttTopicFilterBuilder().WithTopic(switchConfig.StateTopic).Build()
+            });
+            _logger.LogInformation($"Subscribed to switch state topic: {switchConfig.StateTopic}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling switch config.");
         }
     }
 
@@ -293,6 +376,31 @@ public class MqttService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating sensor.");
+            return false;
+        }
+    }
+
+    private async Task<bool> TryCreateSwitch(Switch createSwitchData)
+    {
+        try
+        {
+            var token = await GetJwtTokenAsync();
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var content = new StringContent(JsonSerializer.Serialize(createSwitchData), Encoding.UTF8, "application/json");
+            var response = await client.PostAsync($"{_apiBaseUrl}/api/Switch", content);
+            response.EnsureSuccessStatusCode();
+            _logger.LogInformation($"Successfully created switch: {createSwitchData.Name}");
+            return true;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            _logger.LogWarning($"Switch already exists: {createSwitchData.Name}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating switch.");
             return false;
         }
     }
@@ -338,6 +446,47 @@ public class MqttService
         }
     }
 
+    private async Task<List<Switch>> GetAllSwitchesAsync(string token)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var response = await client.GetAsync($"{_apiBaseUrl}/api/Switch");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError($"Failed to retrieve switches. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}");
+                return new List<Switch>();
+            }
+
+            var responseContent = await response.Content.ReadAsStringAsync();
+            _logger.LogInformation($"Switches response: {responseContent}");
+
+            var jsonDocument = JsonDocument.Parse(responseContent);
+            var switches = jsonDocument.RootElement.GetProperty("$values").Deserialize<List<Switch>>(new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (switches == null || !switches.Any())
+            {
+                _logger.LogWarning("No switches found in the API response.");
+            }
+            else
+            {
+                _logger.LogInformation($"Deserialized switches: {string.Join(", ", switches.Select(s => s.Name))}");
+            }
+
+            return switches ?? new List<Switch>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving switches.");
+            return new List<Switch>();
+        }
+    }
+
     private async Task CreateSensor(Sensor createSensorData)
     {
         try
@@ -378,6 +527,36 @@ public class MqttService
             {
                 var responseContent = await response.Content.ReadAsStringAsync();
                 _logger.LogError($"Failed to send data for sensor {uniqId} to API. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}, Response: {responseContent}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending data to API.");
+        }
+    }
+
+    private async Task SendSwitchDataToApi(string uniqId, string key, string value)
+    {
+        try
+        {
+            _logger.LogInformation($"Preparing to send data for switch {uniqId} to API with key: {key}");
+
+            var token = await GetJwtTokenAsync();
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var content = new StringContent(JsonSerializer.Serialize(new { key, value }), Encoding.UTF8, "application/json");
+
+            _logger.LogInformation($"Sending data to API: {_apiBaseUrl}/api/Switch/name/{uniqId}/data");
+            var response = await client.PostAsync($"{_apiBaseUrl}/api/Switch/name/{uniqId}/data", content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation($"Successfully sent data for switch {uniqId} to API.");
+            }
+            else
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError($"Failed to send data for switch {uniqId} to API. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}, Response: {responseContent}");
             }
         }
         catch (Exception ex)
