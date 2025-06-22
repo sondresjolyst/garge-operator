@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace garge_operator.Models
 {
-    public class DeviceConfig
+    public class SensorConfig
     {
         [JsonPropertyName("name")]
         public required string Name { get; set; }
