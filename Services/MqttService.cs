@@ -177,15 +177,20 @@ namespace garge_operator.Services
                 // Only update and post if state changed
                 lock (_stateLock)
                 {
-                    if (_lastPublishedSwitchStates.TryGetValue(e.ApplicationMessage.Topic, out var lastState) &&
-                        lastState == json)
+                    // Only deduplicate for switch topics or ON/OFF payloads
+                    if (json.Equals("ON", StringComparison.OrdinalIgnoreCase) || json.Equals("OFF", StringComparison.OrdinalIgnoreCase) ||
+                        e.ApplicationMessage.Topic.Contains("/switch/"))
                     {
-                        _logger.LogInformation($"Duplicate switch state '{json}' for topic '{e.ApplicationMessage.Topic}' ignored.");
-                        return;
+                        if (_lastPublishedSwitchStates.TryGetValue(e.ApplicationMessage.Topic, out var lastState) &&
+                            lastState == json)
+                        {
+                            _logger.LogInformation($"Duplicate switch state '{json}' for topic '{e.ApplicationMessage.Topic}' ignored.");
+                            return;
+                        }
+                        _lastPublishedSwitchStates[e.ApplicationMessage.Topic] = json;
+                        _logger.LogInformation($"Updated internal switch state for topic '{e.ApplicationMessage.Topic}' to '{json}'.");
                     }
-                    _lastPublishedSwitchStates[e.ApplicationMessage.Topic] = json;
                 }
-                _logger.LogInformation($"Updated internal state for topic '{e.ApplicationMessage.Topic}' to '{json}'.");
 
                 // Check if the payload is a plain string
                 if (json.Equals("ON", StringComparison.OrdinalIgnoreCase) || json.Equals("OFF", StringComparison.OrdinalIgnoreCase))
