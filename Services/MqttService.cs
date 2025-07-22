@@ -762,7 +762,9 @@ namespace garge_operator.Services
                 {
                     if (_recentlyPublishedStates.Contains($"{topic}:{state}"))
                     {
-                        _logger.LogInformation($"Ignoring self-triggered event for topic '{topic}' with state '{state}'.");
+                        var sanitizedState = state.Replace("\r", "").Replace("\n", "");
+                        var sanitizedTopic = topic.Replace("\r", "").Replace("\n", "");
+                        _logger.LogInformation($"Ignoring self-triggered event for topic '{sanitizedTopic}' with state '{sanitizedState}'.");
                         _recentlyPublishedStates.Remove($"{topic}:{state}");
                         return;
                     }
