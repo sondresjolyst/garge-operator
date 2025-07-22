@@ -664,7 +664,8 @@ namespace garge_operator.Services
                     // Check if the desired state differs from the current state
                     if (_lastPublishedSwitchStates.TryGetValue(topic, out var currentState) && currentState == payload)
                     {
-                        _logger.LogInformation($"Skipping publish for topic '{topic}' as the state '{payload}' is unchanged.");
+                        var sanitizedPayload = payload.Replace("\r", "").Replace("\n", "");
+                        _logger.LogInformation($"Skipping publish for topic '{topic}' as the state '{sanitizedPayload}' is unchanged.");
                         return;
                     }
 
