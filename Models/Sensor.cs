@@ -13,4 +13,6 @@ public class Sensor
 
     [JsonPropertyName("role")]
     public string? Role { get; set; }
+    [JsonPropertyName("parentName")]
+    public required string ParentName { get; set; }
 }
