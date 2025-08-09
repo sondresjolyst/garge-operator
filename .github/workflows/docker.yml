@@ -1,0 +1,42 @@
+﻿name: 🔨 Build and Push Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag for the Docker image'
+        required: true
+  release:
+    types:
+      - published
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: read
+
+jobs:
+  dev:
+    if: github.ref == 'refs/heads/development'
+    uses: equinor/ops-actions/.github/workflows/docker.yml@7250ebf9722b3e8ed96a427b36f8eb2df7512e81
+    secrets:
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    with:
+      environment: dev
+      registry: registry.hub.docker.com
+      username: sondresjo
+      repository: sondresjo/garge-operator
+      tag: dev
+
+  prod:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    uses: equinor/ops-actions/.github/workflows/docker.yml@7250ebf9722b3e8ed96a427b36f8eb2df7512e81
+    secrets:
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    with:
+      environment: prod
+      registry: registry.hub.docker.com
+      username: sondresjo
+      repository: sondresjo/garge-operator
+      tag: ${{ github.event.release.tag_name || github.event.inputs.tag }}

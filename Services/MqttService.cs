@@ -664,7 +664,8 @@ namespace garge_operator.Services
                     // Check if the desired state differs from the current state
                     if (_lastPublishedSwitchStates.TryGetValue(topic, out var currentState) && currentState == payload)
                     {
-                        _logger.LogInformation($"Skipping publish for topic '{topic}' as the state '{payload}' is unchanged.");
+                        var sanitizedPayload = payload.Replace("\r", "").Replace("\n", "");
+                        _logger.LogInformation($"Skipping publish for topic '{topic}' as the state '{sanitizedPayload}' is unchanged.");
                         return;
                     }
 
@@ -761,7 +762,9 @@ namespace garge_operator.Services
                 {
                     if (_recentlyPublishedStates.Contains($"{topic}:{state}"))
                     {
-                        _logger.LogInformation($"Ignoring self-triggered event for topic '{topic}' with state '{state}'.");
+                        var sanitizedState = state.Replace("\r", "").Replace("\n", "");
+                        var sanitizedTopic = topic.Replace("\r", "").Replace("\n", "");
+                        _logger.LogInformation($"Ignoring self-triggered event for topic '{sanitizedTopic}' with state '{sanitizedState}'.");
                         _recentlyPublishedStates.Remove($"{topic}:{state}");
                         return;
                     }
@@ -770,7 +773,7 @@ namespace garge_operator.Services
                 if (_switchUniqIds.TryGetValue(switchName, out var switchUniqId))
                 {
                     await PublishSwitchDataAsync(topic, state);
-                    _logger.LogInformation("Published switch state {@SwitchState}", new { topic, state });
+                    _logger.LogInformation($"Published switch state '{state}' to topic '{topic}'.");
                 }
                 else
                 {
