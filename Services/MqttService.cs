@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using garge_operator.Models;
 using MQTTnet.Packets;
+using garge_operator.Dtos.Mqtt;
 
 namespace garge_operator.Services
 {
@@ -24,7 +25,7 @@ namespace garge_operator.Services
         private readonly object _stateLock = new();
         private readonly string _applicationId = Guid.NewGuid().ToString();
         private readonly Dictionary<string, string> _lastPublishedSwitchStates = new();
-
+        private readonly HashSet<string> _subscribedTopics = new();
 
         public MqttService(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<MqttService> logger)
         {
@@ -39,31 +40,23 @@ namespace garge_operator.Services
             // Safely read broker & port
             var broker = configuration["Mqtt:Broker"];
             if (string.IsNullOrWhiteSpace(broker))
-            {
                 throw new ArgumentException("Mqtt:Broker not set in configuration.");
-            }
 
             var portString = configuration["Mqtt:Port"];
             if (!int.TryParse(portString, out var port))
-            {
                 throw new ArgumentException("Mqtt:Port is invalid or not set in configuration.");
-            }
 
             // Safely read API BaseUrl
             var baseUrl = configuration["Api:BaseUrl"];
             if (string.IsNullOrWhiteSpace(baseUrl))
-            {
                 throw new ArgumentException("Api:BaseUrl not set in configuration.");
-            }
             _apiBaseUrl = baseUrl;
 
             // Safely read username & password
             var username = configuration["Mqtt:Username"];
             var password = configuration["Mqtt:Password"];
             if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-            {
                 throw new ArgumentException("Mqtt:Username or Mqtt:Password not set in configuration.");
-            }
 
             // Create the client
             var factory = new MqttFactory();
@@ -73,6 +66,7 @@ namespace garge_operator.Services
             var clientOptions = new MqttClientOptionsBuilder()
                 .WithClientId($"garge-operator-{Guid.NewGuid()}")
                 .WithTcpServer(broker, port)
+                .WithTlsOptions(o => { o.UseTls(); })
                 .WithCredentials(username, password)
                 .Build();
 
@@ -107,26 +101,23 @@ namespace garge_operator.Services
             _mqttClient.ConnectedAsync += async e =>
             {
                 _logger.LogInformation("Connected to MQTT broker.");
-                // Subscribe to all device config topics
-                var topic = "homeassistant/+/+/config";
                 await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
-            {
-            new MqttTopicFilterBuilder().WithTopic(topic).Build()
-            });
-                _logger.LogInformation($"Subscribed to topic: {topic}");
+{
+                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/config").Build(),
+                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/state").Build(),
+                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/set").Build(),
+                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/discovered_devices/+/discovered").Build()
+                });
+                _logger.LogInformation("Subscribed to garge/devices/+/+/config, state, set topics and device discovery events.");
             };
 
             _mqttClient.DisconnectedAsync += async e =>
             {
                 _logger.LogWarning("Disconnected from MQTT broker.");
                 if (e.Exception != null)
-                {
                     _logger.LogError(e.Exception, "MQTT client disconnected due to an error.");
-                }
                 else
-                {
                     _logger.LogWarning("MQTT client disconnected.");
-                }
 
                 // Attempt to reconnect
                 await Task.Delay(TimeSpan.FromSeconds(5));
@@ -139,173 +130,131 @@ namespace garge_operator.Services
             await _mqttClient.StartAsync(_mqttClientOptions);
         }
 
+        private async Task HandleDiscoveryEvent(string topic, string payload)
+        {
+            try
+            {
+                var devicePayload = JsonSerializer.Deserialize<DiscoveredDevicePayload>(payload);
+                if (devicePayload == null)
+                {
+                    _logger.LogWarning($"Could not deserialize discovery payload: {payload}");
+                    return;
+                }
+
+                _logger.LogInformation($"Handling discovery event for topic {topic} with payload: {payload}");
+
+                await GrantDeviceControlAsync(devicePayload.DiscoveredBy, devicePayload.Target);
+                await PostDiscoveredDevice(devicePayload);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error handling discovery event for topic {topic}");
+            }
+        }
+
         private async Task HandleReceivedMessage(MqttApplicationMessageReceivedEventArgs e)
         {
             try
             {
-                // Ensure ApplicationMessage is not null
-                if (e.ApplicationMessage == null)
+                if (e.ApplicationMessage == null || e.ApplicationMessage.Topic == null)
                 {
-                    _logger.LogError("Received a message with no ApplicationMessage.");
+                    _logger.LogError("Received a message with no ApplicationMessage or topic.");
                     return;
                 }
 
-                // Ensure Topic is not null
-                if (e.ApplicationMessage.Topic == null)
+                var topic = e.ApplicationMessage.Topic;
+                var payload = Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment);
+
+                // Handle discovery event
+                if (topic.StartsWith("garge/devices/") && topic.Contains("/discovered_devices/") && topic.EndsWith("/discovered"))
                 {
-                    _logger.LogError("Received a message with no topic.");
+                    _logger.LogInformation($"Received discovery event: {payload}");
+                    await HandleDiscoveryEvent(topic, payload);
                     return;
                 }
 
-                // Log received message
-                _logger.LogInformation($"Received message on topic: {e.ApplicationMessage.Topic}");
-
-                // Convert the incoming payload
-                var payloadSegment = e.ApplicationMessage.PayloadSegment;
-                if (payloadSegment.Array == null)
+                // Only handle sensor topics with 5 parts
+                var topicParts = topic.Split('/');
+                if (topicParts.Length != 5 || topicParts[0] != "garge" || topicParts[1] != "devices")
                 {
-                    _logger.LogError("Received a message with no payload.");
+                    _logger.LogWarning($"Topic does not match expected structure: {topic}");
                     return;
                 }
 
-                var payload = payloadSegment.Array;
-                var json = Encoding.UTF8.GetString(payload, payloadSegment.Offset, payloadSegment.Count);
+                var deviceId = topicParts[2];
+                var entity = topicParts[3];
+                var type = topicParts[4]; // config, state, set
 
-                // Log the raw payload
-                _logger.LogInformation($"Raw payload: {json}");
+                _logger.LogInformation($"Raw config payload: {payload}");
 
-                // Only update and post if state changed
-                lock (_stateLock)
-                {
-                    // Only deduplicate for switch topics or ON/OFF payloads
-                    if (json.Equals("ON", StringComparison.OrdinalIgnoreCase) || json.Equals("OFF", StringComparison.OrdinalIgnoreCase) ||
-                        e.ApplicationMessage.Topic.Contains("/switch/"))
-                    {
-                        if (_lastPublishedSwitchStates.TryGetValue(e.ApplicationMessage.Topic, out var lastState) &&
-                            lastState == json)
-                        {
-                            _logger.LogInformation($"Duplicate switch state '{json}' for topic '{e.ApplicationMessage.Topic}' ignored.");
-                            return;
-                        }
-                        _lastPublishedSwitchStates[e.ApplicationMessage.Topic] = json;
-                        _logger.LogInformation($"Updated internal switch state for topic '{e.ApplicationMessage.Topic}' to '{json}'.");
-                    }
-                }
-
-                // Check if the payload is a plain string
-                if (json.Equals("ON", StringComparison.OrdinalIgnoreCase) || json.Equals("OFF", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogInformation($"Received plain string payload: {json}");
-
-                    // Extract the device name from the topic
-                    var topicParts = e.ApplicationMessage.Topic.Split('/');
-                    if (topicParts.Length >= 3)
-                    {
-                        var deviceName = topicParts[2];
-
-                        // Handle switch state
-                        if (_switchUniqIds.TryGetValue(deviceName, out var switchUniqId))
-                        {
-                            _logger.LogInformation($"Sending switch state to API for switch {switchUniqId} with value: {json}");
-                            await SendSwitchDataToApi(switchUniqId, "state", json);
-                        }
-                        else
-                        {
-                            _logger.LogWarning($"No uniq_id found for switch {deviceName}");
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Topic does not contain enough parts to extract device name.");
-                    }
-
-                    return; // Exit after handling plain string payload
-                }
-
-                // Attempt to deserialize as JSON
-                var message = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
-                if (message != null && message.TryGetValue("Source", out var source) && source?.ToString() == _applicationId)
+                // Ignore self-triggered messages
+                if (payload.Contains(_applicationId))
                 {
                     _logger.LogInformation("Ignoring self-triggered MQTT message.");
                     return;
                 }
 
-                // Log the received payload
-                _logger.LogInformation($"Received payload: {json}");
-
-                // Check if the message is a device config
-                if (e.ApplicationMessage.Topic.StartsWith("homeassistant/") && e.ApplicationMessage.Topic.EndsWith("/config"))
+                switch (type)
                 {
-                    if (e.ApplicationMessage.Topic.Contains("/switch/"))
-                    {
-                        var switchConfig = JsonSerializer.Deserialize<SwitchConfig>(json);
-                        if (switchConfig != null)
+                    case "config":
+                        if (payload.Contains("\"command_topic\"") && payload.Contains("\"payload_on\""))
                         {
-                            await HandleSwitchConfig(switchConfig);
-                        }
-                    }
-                    else
-                    {
-                        var sensorConfig = JsonSerializer.Deserialize<SensorConfig>(json);
-                        if (sensorConfig != null)
-                        {
-                            await HandleSensorConfig(sensorConfig);
-                        }
-                    }
-                }
-                else
-                {
-                    // Handle sensor or switch data
-                    var topicParts = e.ApplicationMessage.Topic.Split('/');
-                    if (topicParts.Length >= 3)
-                    {
-                        var deviceName = topicParts[2];
-
-                        // Assume the payload is a JSON object and handle sensor data
-                        var data = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
-                        if (data != null)
-                        {
-                            foreach (var kvp in data)
+                            try
                             {
-                                var key = kvp.Key;
-                                var value = kvp.Value?.ToString();
-                                if (value != null)
-                                {
-                                    var deviceKey = $"{deviceName}_{key}";
-                                    if (_sensorUniqIds.TryGetValue(deviceKey, out var uniqId))
-                                    {
-                                        // Handle sensor data
-                                        var sensor = _sensors.FirstOrDefault(s => s.Name == uniqId);
-                                        if (sensor != null && key.Equals(sensor.Type, StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            _logger.LogInformation($"Sending data to API for sensor {uniqId} with key: {key} and value: {value}");
-                                            await SendDataToApi(uniqId, key, value);
-                                        }
-                                        else
-                                        {
-                                            _logger.LogWarning($"Key {key} does not match the sensor type {sensor?.Type} for sensor {uniqId}");
-                                        }
-                                    }
-                                    else
-                                    {
-                                        _logger.LogWarning($"No uniq_id found for device {deviceKey}");
-                                    }
-                                }
-                                else
-                                {
-                                    _logger.LogWarning($"Value for {key} is null or empty.");
-                                }
+                                var switchConfig = JsonSerializer.Deserialize<SwitchConfig>(payload);
+                                if (switchConfig != null)
+                                    await HandleSwitchConfig(switchConfig);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"Error deserializing switch config payload: {payload}");
+                            }
+                        }
+                        else if (payload.Contains("\"stat_cla\"") && payload.Contains("\"stat_t\""))
+                        {
+                            try
+                            {
+                                var sensorConfig = JsonSerializer.Deserialize<SensorConfig>(payload);
+                                if (sensorConfig != null)
+                                    await HandleSensorConfig(sensorConfig);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"Error deserializing sensor config payload: {payload}");
                             }
                         }
                         else
                         {
-                            _logger.LogWarning("Device data is null.");
+                            _logger.LogWarning($"Received unknown or incomplete config payload: {payload}");
                         }
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Topic does not contain enough parts to extract device name.");
-                    }
+                        break;
+
+                    case "state":
+                        if (_switchUniqIds.ContainsKey(entity))
+                        {
+                            await SendSwitchDataToApi(entity, "state", payload);
+                        }
+                        else
+                        {
+                            try
+                            {
+                                var data = JsonSerializer.Deserialize<Dictionary<string, object>>(payload);
+                                if (data != null && data.TryGetValue("value", out var value) && value != null)
+                                {
+                                    await SendDataToApi(entity, value.ToString());
+                                }
+                                else
+                                {
+                                    _logger.LogWarning($"Sensor state payload for {entity} did not contain a valid 'value' property.");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, $"Failed to parse sensor state payload for {entity}, sending as raw string.");
+                                await SendDataToApi(entity, payload);
+                            }
+                        }
+                        break;
                 }
             }
             catch (JsonException ex)
@@ -322,9 +271,7 @@ namespace garge_operator.Services
         {
             try
             {
-                // Log the current sensors for debugging
                 _logger.LogInformation("Current sensors: " + string.Join(", ", _sensors.Select(s => s.Name)));
-
                 // Check if the sensor exists in the list
                 var sensorExists = _sensors.Any(s => s.Name == sensorConfig.UniqId);
                 if (!sensorExists)
@@ -333,10 +280,10 @@ namespace garge_operator.Services
                     var createSensorData = new Sensor
                     {
                         Name = sensorConfig.UniqId,
-                        Type = sensorConfig.DevCla
+                        Type = sensorConfig.DevCla,
+                        ParentName = sensorConfig.ParentName,
                     };
                     var created = await TryCreateSensor(createSensorData);
-
                     if (created)
                     {
                         // Add the new sensor to the list
@@ -346,17 +293,9 @@ namespace garge_operator.Services
 
                 // Store the uniq_id for the sensor type
                 _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
-                _logger.LogInformation($"Stored uniq_id for sensor {sensorConfig.UniqId}");
 
-                // Log the current uniq_id mappings for debugging
-                _logger.LogInformation("Current uniq_id mappings: " + string.Join(", ", _sensorUniqIds.Select(kvp => $"{kvp.Key}: {kvp.Value}")));
-
-                // Subscribe to the sensor's state topic
-                await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
-            {
-                new MqttTopicFilterBuilder().WithTopic(sensorConfig.StatT).Build()
-            });
-                _logger.LogInformation($"Subscribed to sensor state topic: {sensorConfig.StatT}");
+                _logger.LogDebug("Stored uniq_id for sensor {UniqId}", sensorConfig.UniqId);
+                _logger.LogDebug("Current uniq_id keys: {Keys}", string.Join(", ", _sensorUniqIds.Keys));
             }
             catch (Exception ex)
             {
@@ -368,9 +307,7 @@ namespace garge_operator.Services
         {
             try
             {
-                // Log the current switches for debugging
                 _logger.LogInformation("Current switches: " + string.Join(", ", _switches.Select(s => s.Name)));
-
                 // Check if the switch exists in the list
                 var switchExists = _switches.Any(s => s.Name == switchConfig.UniqId);
                 if (!switchExists)
@@ -379,31 +316,94 @@ namespace garge_operator.Services
                     var createSwitchData = new Switch
                     {
                         Name = switchConfig.UniqId,
-                        Type = "switch" // Assuming type is "switch"
+                        Type = switchConfig.Device.Model
                     };
                     var created = await TryCreateSwitch(createSwitchData);
-
                     if (created)
-                    {
-                        // Add the new switch to the list
                         _switches.Add(createSwitchData);
-                    }
                 }
-
-                // Store the uniq_id for the switch
                 _switchUniqIds[switchConfig.UniqId] = switchConfig.UniqId;
-                _logger.LogInformation($"Stored uniq_id for switch {switchConfig.UniqId}");
-
-                // Subscribe to the switch's state topic
-                await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
-            {
-                new MqttTopicFilterBuilder().WithTopic(switchConfig.StateTopic).Build()
-            });
-                _logger.LogInformation($"Subscribed to switch state topic: {switchConfig.StateTopic}");
+                _logger.LogDebug("Stored uniq_id for switch {UniqId}", switchConfig.UniqId);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling switch config.");
+            }
+        }
+
+        private async Task<bool> GrantDeviceControlAsync(string granteeDeviceId, string targetDeviceId)
+        {
+            try
+            {
+                var token = await GetJwtTokenAsync();
+                var client = _httpClientFactory.CreateClient();
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+                var topic = $"garge/devices/{targetDeviceId}/#";
+                bool allSucceeded = true;
+
+                _logger.LogInformation($"Granting publish rights for {granteeDeviceId} to topic {topic}...");
+
+                foreach (var retain in new[] { false, true })
+                {
+                    var aclPayload = new
+                    {
+                        Username = granteeDeviceId,
+                        Permission = "allow",
+                        Action = "all",
+                        Topic = topic,
+                        Qos = 0,
+                        Retain = retain ? 1 : 0
+                    };
+
+                    var content = new StringContent(JsonSerializer.Serialize(aclPayload), Encoding.UTF8, "application/json");
+                    var response = await client.PostAsync($"{_apiBaseUrl}/api/mqtt/acl", content);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation($"Granted publish rights for {granteeDeviceId} to topic {topic} (retain={retain}).");
+                    }
+                    else
+                    {
+                        var error = await response.Content.ReadAsStringAsync();
+                        _logger.LogError($"Failed to grant ACL for {granteeDeviceId} to topic {topic} (retain={retain}): StatusCode={response.StatusCode}, Response={error}");
+                        allSucceeded = false;
+                    }
+                }
+
+                return allSucceeded;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error granting device control ACL.");
+                return false;
+            }
+        }
+
+        private async Task PostDiscoveredDevice(DiscoveredDevicePayload devicePayload)
+        {
+            try
+            {
+                var token = await GetJwtTokenAsync();
+                var client = _httpClientFactory.CreateClient();
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+                var content = new StringContent(JsonSerializer.Serialize(devicePayload), Encoding.UTF8, "application/json");
+                var response = await client.PostAsync($"{_apiBaseUrl}/api/mqtt/discovered-device", content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation($"Posted discovered device: {JsonSerializer.Serialize(devicePayload)}");
+                }
+                else
+                {
+                    var error = await response.Content.ReadAsStringAsync();
+                    _logger.LogError($"Failed to post discovered device: StatusCode={response.StatusCode}, Response={error}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error posting discovered device.");
             }
         }
 
@@ -417,7 +417,7 @@ namespace garge_operator.Services
                 var content = new StringContent(JsonSerializer.Serialize(createSensorData), Encoding.UTF8, "application/json");
                 var response = await client.PostAsync($"{_apiBaseUrl}/api/sensors", content);
                 response.EnsureSuccessStatusCode();
-                _logger.LogInformation($"Successfully created sensor: {createSensorData.Name}");
+                _logger.LogDebug($"Successfully created sensor: {createSensorData.Name}");
                 return true;
             }
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
@@ -467,12 +467,12 @@ namespace garge_operator.Services
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError($"Failed to retrieve sensors. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}");
+                    _logger.LogError("Failed to retrieve sensors. Status code: {StatusCode}, Reason: {ReasonPhrase}", response.StatusCode, response.ReasonPhrase);
                     return new List<Sensor>();
                 }
 
                 var responseContent = await response.Content.ReadAsStringAsync();
-                _logger.LogInformation($"Sensors response: {responseContent}");
+                _logger.LogDebug("Sensors response length: {Length}", responseContent.Length);
 
                 var jsonDocument = JsonDocument.Parse(responseContent);
                 var sensors = jsonDocument.RootElement.GetProperty("$values").Deserialize<List<Sensor>>(new JsonSerializerOptions
@@ -486,7 +486,7 @@ namespace garge_operator.Services
                 }
                 else
                 {
-                    _logger.LogInformation($"Deserialized sensors: {string.Join(", ", sensors.Select(s => s.Name))}");
+                    _logger.LogInformation("Deserialized {SensorCount} sensors.", sensors.Count);
                 }
 
                 return sensors ?? new List<Sensor>();
@@ -513,7 +513,7 @@ namespace garge_operator.Services
                 }
 
                 var responseContent = await response.Content.ReadAsStringAsync();
-                _logger.LogInformation($"Switches response: {responseContent}");
+                _logger.LogDebug("Switches response length: {Length}", responseContent.Length);
 
                 var jsonDocument = JsonDocument.Parse(responseContent);
                 var switches = jsonDocument.RootElement.GetProperty("$values").Deserialize<List<Switch>>(new JsonSerializerOptions
@@ -527,7 +527,7 @@ namespace garge_operator.Services
                 }
                 else
                 {
-                    _logger.LogInformation($"Deserialized switches: {string.Join(", ", switches.Select(s => s.Name))}");
+                    _logger.LogInformation("Deserialized {SwitchCount} switches.", switches.Count);
                 }
 
                 return switches ?? new List<Switch>();
@@ -557,16 +557,16 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task SendDataToApi(string uniqId, string key, string value)
+        private async Task SendDataToApi(string uniqId, string value)
         {
             try
             {
-                _logger.LogInformation($"Preparing to send data for sensor {uniqId} to API with key: {key}");
+                _logger.LogInformation($"Preparing to send data for sensor {uniqId} to API with value: {value}");
 
                 var token = await GetJwtTokenAsync();
                 var client = _httpClientFactory.CreateClient();
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                var content = new StringContent(JsonSerializer.Serialize(new { key, value }), Encoding.UTF8, "application/json");
+                var content = new StringContent(JsonSerializer.Serialize(new { value = value }), Encoding.UTF8, "application/json");
 
                 _logger.LogInformation($"Sending data to API: {_apiBaseUrl}/api/sensors/name/{uniqId}/data");
                 var response = await client.PostAsync($"{_apiBaseUrl}/api/sensors/name/{uniqId}/data", content);
@@ -637,7 +637,7 @@ namespace garge_operator.Services
                 }
 
                 var responseContent = await response.Content.ReadAsStringAsync();
-                _logger.LogInformation("Successfully retrieved JWT token.");
+                _logger.LogDebug("Successfully retrieved JWT token.");
 
                 var tokenResponse = JsonSerializer.Deserialize<JwtTokenResponse>(responseContent);
                 if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.Token))
@@ -687,7 +687,7 @@ namespace garge_operator.Services
                     .Build();
 
                 await _mqttClient.EnqueueAsync(message);
-                _logger.LogInformation($"Published Switch data to topic '{topic}': {messagePayload}");
+                _logger.LogDebug("Published Switch data to topic '{Topic}': {Payload}", topic, messagePayload);
             }
             catch (Exception ex)
             {
@@ -740,7 +740,7 @@ namespace garge_operator.Services
         {
             try
             {
-                _logger.LogInformation($"Received webhook data: {JsonSerializer.Serialize(payload)}");
+                _logger.LogDebug("Received webhook data for switch: {SwitchName}, value: {Value}", payload.Switch?.Name, payload.Value);
 
                 if (payload.Switch == null)
                 {
@@ -757,7 +757,7 @@ namespace garge_operator.Services
                 var switchName = payload.Switch.Name;
                 var state = payload.Value.ToUpperInvariant();
 
-                var topic = $"home/storage/{switchName}/set";
+                var topic = $"garge/devices/{switchName}/set";
                 lock (_stateLock)
                 {
                     if (_recentlyPublishedStates.Contains($"{topic}:{state}"))
@@ -773,9 +773,7 @@ namespace garge_operator.Services
                 if (_switchUniqIds.TryGetValue(switchName, out var switchUniqId))
                 {
                     await PublishSwitchDataAsync(topic, state);
-                    var sanitizedState = state.Replace("\r", "").Replace("\n", "");
-                    var sanitizedTopic = topic.Replace("\r", "").Replace("\n", "");
-                    _logger.LogInformation($"Published switch state '{sanitizedState}' to topic '{sanitizedTopic}'.");
+                    _logger.LogInformation($"Published switch state '{state}' to topic '{topic}'.");
                 }
                 else
                 {
