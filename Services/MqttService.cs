@@ -773,7 +773,9 @@ namespace garge_operator.Services
                 if (_switchUniqIds.TryGetValue(switchName, out var switchUniqId))
                 {
                     await PublishSwitchDataAsync(topic, state);
-                    _logger.LogInformation($"Published switch state '{state}' to topic '{topic}'.");
+                    var sanitizedState = state.Replace("\r", "").Replace("\n", "");
+                    var sanitizedTopic = topic.Replace("\r", "").Replace("\n", "");
+                    _logger.LogInformation($"Published switch state '{sanitizedState}' to topic '{sanitizedTopic}'.");
                 }
                 else
                 {
