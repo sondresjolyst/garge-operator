@@ -75,6 +75,17 @@ namespace garge_operator.Services
                 .Build();
         }
 
+        public IReadOnlyDictionary<string, string> LastPublishedSwitchStates
+        {
+            get
+            {
+                lock (_stateLock)
+                {
+                    return new Dictionary<string, string>(_lastPublishedSwitchStates);
+                }
+            }
+        }
+
         public async Task ConnectAsync()
         {
             // Ensure login is successful before connecting to MQTT broker
@@ -102,13 +113,14 @@ namespace garge_operator.Services
             {
                 _logger.LogInformation("Connected to MQTT broker.");
                 await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
-{
+                {
+                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/config").Build(),
                     new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/config").Build(),
                     new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/state").Build(),
                     new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/set").Build(),
                     new MqttTopicFilterBuilder().WithTopic("garge/devices/+/discovered_devices/+/discovered").Build()
                 });
-                _logger.LogInformation("Subscribed to garge/devices/+/+/config, state, set topics and device discovery events.");
+                _logger.LogInformation("Subscribed to garge/devices/+/config, garge/devices/+/+/config, state, set topics and device discovery events.");
             };
 
             _mqttClient.DisconnectedAsync += async e =>
@@ -173,17 +185,16 @@ namespace garge_operator.Services
                     return;
                 }
 
-                // Only handle sensor topics with 5 parts
                 var topicParts = topic.Split('/');
-                if (topicParts.Length != 5 || topicParts[0] != "garge" || topicParts[1] != "devices")
+                if (topicParts.Length < 4 || topicParts[0] != "garge" || topicParts[1] != "devices")
                 {
                     _logger.LogWarning($"Topic does not match expected structure: {topic}");
                     return;
                 }
 
-                var deviceId = topicParts[2];
-                var entity = topicParts[3];
-                var type = topicParts[4]; // config, state, set
+                string deviceId = topicParts[2];
+                string type = topicParts[^1]; // config, state, set
+                string entity = topicParts.Length == 5 ? topicParts[3] : deviceId; // entity if present, else deviceId
 
                 _logger.LogInformation($"Raw config payload: {payload}");
 
@@ -233,19 +244,31 @@ namespace garge_operator.Services
                         if (_switchUniqIds.ContainsKey(entity))
                         {
                             await SendSwitchDataToApi(entity, "state", payload);
+                            lock (_stateLock)
+                            {
+                                _lastPublishedSwitchStates[entity] = payload.ToUpperInvariant();
+                            }
+                            _logger.LogInformation($"Updated local switch state for '{entity}' to '{payload.ToUpperInvariant()}'.");
                         }
-                        else
+                        else if (_sensorUniqIds.ContainsKey(entity))
                         {
                             try
                             {
-                                var data = JsonSerializer.Deserialize<Dictionary<string, object>>(payload);
-                                if (data != null && data.TryGetValue("value", out var value) && value != null)
+                                if (payload.TrimStart().StartsWith("{") || payload.TrimStart().StartsWith("["))
                                 {
-                                    await SendDataToApi(entity, value.ToString());
+                                    var data = JsonSerializer.Deserialize<Dictionary<string, object>>(payload);
+                                    if (data != null && data.TryGetValue("value", out var value) && value != null)
+                                    {
+                                        await SendDataToApi(entity, value.ToString());
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning($"Sensor state payload for {entity} did not contain a valid 'value' property.");
+                                    }
                                 }
                                 else
                                 {
-                                    _logger.LogWarning($"Sensor state payload for {entity} did not contain a valid 'value' property.");
+                                    await SendDataToApi(entity, payload);
                                 }
                             }
                             catch (Exception ex)
@@ -253,6 +276,10 @@ namespace garge_operator.Services
                                 _logger.LogWarning(ex, $"Failed to parse sensor state payload for {entity}, sending as raw string.");
                                 await SendDataToApi(entity, payload);
                             }
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"Entity '{entity}' not found in switch or sensor lists.");
                         }
                         break;
                 }
@@ -324,6 +351,7 @@ namespace garge_operator.Services
                 }
                 _switchUniqIds[switchConfig.UniqId] = switchConfig.UniqId;
                 _logger.LogDebug("Stored uniq_id for switch {UniqId}", switchConfig.UniqId);
+
             }
             catch (Exception ex)
             {
@@ -617,7 +645,7 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task<string> GetJwtTokenAsync()
+        public async Task<string> GetJwtTokenAsync()
         {
             try
             {
@@ -661,23 +689,18 @@ namespace garge_operator.Services
             {
                 lock (_stateLock)
                 {
-                    // Check if the desired state differs from the current state
-                    if (_lastPublishedSwitchStates.TryGetValue(topic, out var currentState) && currentState == payload)
+                    var switchName = topic.Split('/')[2];
+                    if (_lastPublishedSwitchStates.TryGetValue(switchName, out var currentState) && currentState == payload)
                     {
                         var sanitizedPayload = payload.Replace("\r", "").Replace("\n", "");
-                        _logger.LogInformation($"Skipping publish for topic '{topic}' as the state '{sanitizedPayload}' is unchanged.");
+                        _logger.LogInformation($"Skipping publish for switch '{switchName}' as the state '{sanitizedPayload}' is unchanged.");
                         return;
                     }
 
-                    // Update the internal state to the new state
-                    _lastPublishedSwitchStates[topic] = payload;
+                    _lastPublishedSwitchStates[switchName] = payload;
                 }
 
-                var messagePayload = JsonSerializer.Serialize(new
-                {
-                    State = payload,
-                    Source = _applicationId
-                });
+                var messagePayload = payload.ToUpperInvariant();
 
                 var message = new MqttApplicationMessageBuilder()
                     .WithTopic(topic)
