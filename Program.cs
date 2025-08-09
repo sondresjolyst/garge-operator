@@ -1,14 +1,23 @@
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using garge_operator.Services;
 using Microsoft.AspNetCore.Hosting;
+using Serilog;
 using Microsoft.AspNetCore.Http;
+using System.Text.Json;
 
 var builder = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((context, config) =>
     {
         config.AddUserSecrets<Program>();
+    });
+
+var host = builder
+    .UseSerilog((context, services, configuration) =>
+    {
+        configuration
+            .WriteTo.Console()
+            .Enrich.FromLogContext()
+            .ReadFrom.Configuration(context.Configuration);
     })
     .ConfigureServices((context, services) =>
     {
@@ -22,26 +31,32 @@ var builder = Host.CreateDefaultBuilder(args)
         {
             var mqttService = app.ApplicationServices.GetRequiredService<MqttService>();
 
-            // Add routing middleware
             app.UseRouting();
 
-            // Map endpoints
             app.UseEndpoints(endpoints =>
             {
-                endpoints.MapPost("/webhook", async (WebhookPayload payload) =>
+                endpoints.MapPost("/webhook", async context =>
                 {
+                    var mqttService = context.RequestServices.GetRequiredService<MqttService>();
+
+                    var payload = await JsonSerializer.DeserializeAsync<WebhookPayload>(context.Request.Body);
+
                     if (payload == null)
                     {
-                        return Results.BadRequest("Payload is null.");
+                        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                        await context.Response.WriteAsync("Payload is null.");
+                        return;
                     }
 
-                    // Process the webhook data using MqttService
                     await mqttService.HandleWebhookDataAsync(payload);
-                    return Results.Ok("Webhook data processed.");
+
+                    context.Response.StatusCode = StatusCodes.Status200OK;
+                    await context.Response.WriteAsync("Webhook data processed.");
                 });
             });
-        });
-    });
 
-var host = builder.Build();
+        });
+    })
+    .Build();
+
 await host.RunAsync();
