@@ -20,5 +20,7 @@ namespace garge_operator.Models
         public required string UniqId { get; set; }
         [JsonPropertyName("val_tpl")]
         public required string ValTpl { get; set; }
+        [JsonPropertyName("parent_name")]
+        public required string ParentName { get; set; }
     }
 }
