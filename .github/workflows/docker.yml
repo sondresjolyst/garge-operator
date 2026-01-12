@@ -1,4 +1,4 @@
-﻿name: 🔨 Build and Push Docker Image
+name: 🔨 Build and Push Docker Image
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ permissions:
 jobs:
   dev:
     if: github.ref == 'refs/heads/development'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@7250ebf9722b3e8ed96a427b36f8eb2df7512e81
+    uses: equinor/ops-actions/.github/workflows/docker.yml@c096742f0e74f7edbccc01c38020050894425506
     secrets:
         password: ${{ secrets.DOCKER_PASSWORD }}
     with:
@@ -31,7 +31,7 @@ jobs:
 
   prod:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@7250ebf9722b3e8ed96a427b36f8eb2df7512e81
+    uses: equinor/ops-actions/.github/workflows/docker.yml@c096742f0e74f7edbccc01c38020050894425506
     secrets:
         password: ${{ secrets.DOCKER_PASSWORD }}
     with:
