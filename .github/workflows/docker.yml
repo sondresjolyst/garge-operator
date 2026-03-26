@@ -21,7 +21,7 @@ jobs:
     if: github.ref == 'refs/heads/development'
     uses: equinor/ops-actions/.github/workflows/docker.yml@ecbe5190dbfb866ebd36d850cd68e01b873f969c
     secrets:
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
       environment: dev
       registry: registry.hub.docker.com
@@ -33,7 +33,7 @@ jobs:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     uses: equinor/ops-actions/.github/workflows/docker.yml@ecbe5190dbfb866ebd36d850cd68e01b873f969c
     secrets:
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
       environment: prod
       registry: registry.hub.docker.com
