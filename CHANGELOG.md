@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/sondresjolyst/garge-operator/compare/v1.1.0...v1.2.0) (2026-03-26)
+
+
+### Features
+
+* forward battery health MQTT messages to API ([#25](https://github.com/sondresjolyst/garge-operator/issues/25)) ([3ddba58](https://github.com/sondresjolyst/garge-operator/commit/3ddba584815dd034d7e71ed8b08271700e10667f))
+
 ## [1.1.0](https://github.com/sondresjolyst/garge-operator/compare/v1.0.0...v1.1.0) (2025-08-10)
 
 
