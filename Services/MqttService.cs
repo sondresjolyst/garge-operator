@@ -515,7 +515,7 @@ namespace garge_operator.Services
                 _logger.LogDebug("Sensors response length: {Length}", responseContent.Length);
 
                 var jsonDocument = JsonDocument.Parse(responseContent);
-                var sensors = jsonDocument.RootElement.GetProperty("$values").Deserialize<List<Sensor>>(new JsonSerializerOptions
+                var sensors = jsonDocument.RootElement.Deserialize<List<Sensor>>(new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
                 });
@@ -556,7 +556,7 @@ namespace garge_operator.Services
                 _logger.LogDebug("Switches response length: {Length}", responseContent.Length);
 
                 var jsonDocument = JsonDocument.Parse(responseContent);
-                var switches = jsonDocument.RootElement.GetProperty("$values").Deserialize<List<Switch>>(new JsonSerializerOptions
+                var switches = jsonDocument.RootElement.Deserialize<List<Switch>>(new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
                 });

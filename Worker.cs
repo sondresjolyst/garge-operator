@@ -68,9 +68,7 @@ public class Worker : BackgroundService
 
         var json = await response.Content.ReadAsStringAsync(stoppingToken);
         var doc = JsonDocument.Parse(json);
-        var rules = doc.RootElement.TryGetProperty("$values", out var valuesElement)
-            ? JsonSerializer.Deserialize<List<AutomationRuleDto>>(valuesElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            : null;
+        var rules = JsonSerializer.Deserialize<List<AutomationRuleDto>>(doc.RootElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (rules == null)
         {
             _logger.LogWarning("No automation rules found.");
