@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/sondresjolyst/garge-operator/compare/v1.2.0...v1.2.1) (2026-03-27)
+
+
+### Bug Fixes
+
+* seed battery health sensor tracking on operator startup ([#28](https://github.com/sondresjolyst/garge-operator/issues/28)) ([b3e19e7](https://github.com/sondresjolyst/garge-operator/commit/b3e19e77b85903188a5b46833baffe203c8aa00d))
+
 ## [1.2.0](https://github.com/sondresjolyst/garge-operator/compare/v1.1.0...v1.2.0) (2026-03-26)
 
 

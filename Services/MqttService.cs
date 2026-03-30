@@ -103,6 +103,14 @@ namespace garge_operator.Services
             // Get all sensors from the API
             _sensors = await GetAllSensorsAsync(token);
 
+            // Seed battery health sensor tracking from pre-existing sensors so they
+            // are routed correctly after an operator restart (without waiting for a new config message).
+            foreach (var s in _sensors.Where(s => s.Type == "battery"))
+            {
+                _batteryHealthUniqIds.Add(s.Name);
+                _sensorUniqIds[s.Name] = s.Name;
+            }
+
             // Get all switches from the API
             _switches = await GetAllSwitchesAsync(token);
 
