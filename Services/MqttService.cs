@@ -21,6 +21,7 @@ namespace garge_operator.Services
         private List<Switch> _switches;
         private Dictionary<string, string> _sensorUniqIds;
         private Dictionary<string, string> _switchUniqIds;
+        private readonly HashSet<string> _batteryHealthUniqIds = new();
         private readonly HashSet<string> _recentlyPublishedStates = new();
         private readonly object _stateLock = new();
         private readonly string _applicationId = Guid.NewGuid().ToString();
@@ -101,6 +102,14 @@ namespace garge_operator.Services
 
             // Get all sensors from the API
             _sensors = await GetAllSensorsAsync(token);
+
+            // Seed battery health sensor tracking from pre-existing sensors so they
+            // are routed correctly after an operator restart (without waiting for a new config message).
+            foreach (var s in _sensors.Where(s => s.Type == "battery"))
+            {
+                _batteryHealthUniqIds.Add(s.Name);
+                _sensorUniqIds[s.Name] = s.Name;
+            }
 
             // Get all switches from the API
             _switches = await GetAllSwitchesAsync(token);
@@ -252,29 +261,36 @@ namespace garge_operator.Services
                         }
                         else if (_sensorUniqIds.ContainsKey(entity))
                         {
-                            try
+                            if (_batteryHealthUniqIds.Contains(entity))
                             {
-                                if (payload.TrimStart().StartsWith("{") || payload.TrimStart().StartsWith("["))
+                                await SendBatteryHealthToApi(entity, payload);
+                            }
+                            else
+                            {
+                                try
                                 {
-                                    var data = JsonSerializer.Deserialize<Dictionary<string, object>>(payload);
-                                    if (data != null && data.TryGetValue("value", out var value) && value != null)
+                                    if (payload.TrimStart().StartsWith("{") || payload.TrimStart().StartsWith("["))
                                     {
-                                        await SendDataToApi(entity, value.ToString());
+                                        var data = JsonSerializer.Deserialize<Dictionary<string, object>>(payload);
+                                        if (data != null && data.TryGetValue("value", out var value) && value != null)
+                                        {
+                                            await SendDataToApi(entity, value.ToString());
+                                        }
+                                        else
+                                        {
+                                            _logger.LogWarning($"Sensor state payload for {entity} did not contain a valid 'value' property.");
+                                        }
                                     }
                                     else
                                     {
-                                        _logger.LogWarning($"Sensor state payload for {entity} did not contain a valid 'value' property.");
+                                        await SendDataToApi(entity, payload);
                                     }
                                 }
-                                else
+                                catch (Exception ex)
                                 {
+                                    _logger.LogWarning(ex, $"Failed to parse sensor state payload for {entity}, sending as raw string.");
                                     await SendDataToApi(entity, payload);
                                 }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogWarning(ex, $"Failed to parse sensor state payload for {entity}, sending as raw string.");
-                                await SendDataToApi(entity, payload);
                             }
                         }
                         else
@@ -320,6 +336,10 @@ namespace garge_operator.Services
 
                 // Store the uniq_id for the sensor type
                 _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
+
+                // Track battery health sensors separately so the state handler routes them correctly
+                if (sensorConfig.DevCla == "battery")
+                    _batteryHealthUniqIds.Add(sensorConfig.UniqId);
 
                 _logger.LogDebug("Stored uniq_id for sensor {UniqId}", sensorConfig.UniqId);
                 _logger.LogDebug("Current uniq_id keys: {Keys}", string.Join(", ", _sensorUniqIds.Keys));
@@ -612,6 +632,52 @@ namespace garge_operator.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error sending data to API.");
+            }
+        }
+
+        private async Task SendBatteryHealthToApi(string sensorName, string payload)
+        {
+            try
+            {
+                _logger.LogInformation($"Preparing to send battery health for sensor {sensorName} to API.");
+
+                var batteryPayload = JsonSerializer.Deserialize<BatteryHealthPayload>(payload);
+                if (batteryPayload == null)
+                {
+                    _logger.LogError($"Failed to deserialize battery health payload for {sensorName}: {payload}");
+                    return;
+                }
+
+                var dto = new
+                {
+                    status = batteryPayload.Status,
+                    baseline = batteryPayload.Baseline,
+                    lastCharge = batteryPayload.LastCharge,
+                    dropPct = batteryPayload.DropPct,
+                    chargesRecorded = batteryPayload.ChargesRecorded
+                };
+
+                var token = await GetJwtTokenAsync();
+                var client = _httpClientFactory.CreateClient();
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var content = new StringContent(JsonSerializer.Serialize(dto), Encoding.UTF8, "application/json");
+
+                _logger.LogInformation($"Sending battery health to API: {_apiBaseUrl}/api/battery-health/name/{sensorName}");
+                var response = await client.PostAsync($"{_apiBaseUrl}/api/battery-health/name/{sensorName}", content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation($"Successfully sent battery health for sensor {sensorName} to API.");
+                }
+                else
+                {
+                    var responseContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError($"Failed to send battery health for sensor {sensorName} to API. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}, Response: {responseContent}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error sending battery health to API for sensor {sensorName}.");
             }
         }
 
