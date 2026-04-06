@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/sondresjolyst/garge-operator/compare/v1.2.1...v1.2.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* update deserialisation for ReferenceHandler.IgnoreCycles ([#36](https://github.com/sondresjolyst/garge-operator/issues/36)) ([39be2ba](https://github.com/sondresjolyst/garge-operator/commit/39be2baae80844161c83831739c347291bc32dbe))
+
 ## [1.2.1](https://github.com/sondresjolyst/garge-operator/compare/v1.2.0...v1.2.1) (2026-03-27)
 
 
