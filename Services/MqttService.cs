@@ -103,6 +103,14 @@ namespace garge_operator.Services
             // Get all sensors from the API
             _sensors = await GetAllSensorsAsync(token);
 
+            // Seed battery health sensor tracking from pre-existing sensors so they
+            // are routed correctly after an operator restart (without waiting for a new config message).
+            foreach (var s in _sensors.Where(s => s.Type == "battery"))
+            {
+                _batteryHealthUniqIds.Add(s.Name);
+                _sensorUniqIds[s.Name] = s.Name;
+            }
+
             // Get all switches from the API
             _switches = await GetAllSwitchesAsync(token);
 
@@ -307,16 +315,6 @@ namespace garge_operator.Services
             try
             {
                 _logger.LogInformation("Current sensors: " + string.Join(", ", _sensors.Select(s => s.Name)));
-
-                // Battery health is not stored as a sensor; derive the voltage sensor name by convention.
-                if (sensorConfig.DevCla == "battery")
-                {
-                    _batteryHealthUniqIds.Add(sensorConfig.UniqId);
-                    _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
-                    _logger.LogDebug("Tracked battery health uniq_id {UniqId}", sensorConfig.UniqId);
-                    return;
-                }
-
                 // Check if the sensor exists in the list
                 var sensorExists = _sensors.Any(s => s.Name == sensorConfig.UniqId);
                 if (!sensorExists)
@@ -338,6 +336,10 @@ namespace garge_operator.Services
 
                 // Store the uniq_id for the sensor type
                 _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
+
+                // Track battery health sensors separately so the state handler routes them correctly
+                if (sensorConfig.DevCla == "battery")
+                    _batteryHealthUniqIds.Add(sensorConfig.UniqId);
 
                 _logger.LogDebug("Stored uniq_id for sensor {UniqId}", sensorConfig.UniqId);
                 _logger.LogDebug("Current uniq_id keys: {Keys}", string.Join(", ", _sensorUniqIds.Keys));
@@ -637,8 +639,7 @@ namespace garge_operator.Services
         {
             try
             {
-                var voltageSensorName = sensorName.Replace("_battery_health", "_voltage");
-                _logger.LogInformation($"Preparing to send battery health for voltage sensor {voltageSensorName} to API.");
+                _logger.LogInformation($"Preparing to send battery health for sensor {sensorName} to API.");
 
                 var batteryPayload = JsonSerializer.Deserialize<BatteryHealthPayload>(payload);
                 if (batteryPayload == null)
@@ -661,17 +662,17 @@ namespace garge_operator.Services
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 var content = new StringContent(JsonSerializer.Serialize(dto), Encoding.UTF8, "application/json");
 
-                _logger.LogInformation($"Sending battery health to API: {_apiBaseUrl}/api/battery-health/name/{voltageSensorName}");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/battery-health/name/{voltageSensorName}", content);
+                _logger.LogInformation($"Sending battery health to API: {_apiBaseUrl}/api/battery-health/name/{sensorName}");
+                var response = await client.PostAsync($"{_apiBaseUrl}/api/battery-health/name/{sensorName}", content);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation($"Successfully sent battery health for voltage sensor {voltageSensorName} to API.");
+                    _logger.LogInformation($"Successfully sent battery health for sensor {sensorName} to API.");
                 }
                 else
                 {
                     var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError($"Failed to send battery health for voltage sensor {voltageSensorName} to API. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}, Response: {responseContent}");
+                    _logger.LogError($"Failed to send battery health for sensor {sensorName} to API. Status code: {response.StatusCode}, Reason: {response.ReasonPhrase}, Response: {responseContent}");
                 }
             }
             catch (Exception ex)
