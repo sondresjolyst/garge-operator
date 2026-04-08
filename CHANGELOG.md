@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/sondresjolyst/garge-operator/compare/v1.2.2...v1.2.3) (2026-04-08)
+
+
+### Bug Fixes
+
+* skip battery sensor creation, derive voltage sensor name for routing ([905c1e5](https://github.com/sondresjolyst/garge-operator/commit/905c1e577f50fbe44f219437ea5957aeb544a47c))
+
 ## [1.2.2](https://github.com/sondresjolyst/garge-operator/compare/v1.2.1...v1.2.2) (2026-04-06)
 
 

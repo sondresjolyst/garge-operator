@@ -242,6 +242,14 @@ namespace garge_operator.Services
                         break;
 
                     case "state":
+                        // Skip retained state messages — these are replayed by the broker on reconnect
+                        // and do not represent new sensor readings. New publishes from firmware are
+                        // forwarded by the broker with Retain=false even if the publisher set retain=true.
+                        if (e.ApplicationMessage.Retain)
+                        {
+                            _logger.LogDebug($"Ignoring retained state message on topic {topic}.");
+                            break;
+                        }
                         if (_switchUniqIds.ContainsKey(entity))
                         {
                             await SendSwitchDataToApi(entity, "state", payload);
