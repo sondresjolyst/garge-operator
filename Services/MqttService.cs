@@ -242,6 +242,14 @@ namespace garge_operator.Services
                         break;
 
                     case "state":
+                        // Skip retained state messages — these are replayed by the broker on reconnect
+                        // and do not represent new sensor readings. New publishes from firmware are
+                        // forwarded by the broker with Retain=false even if the publisher set retain=true.
+                        if (e.ApplicationMessage.Retain)
+                        {
+                            _logger.LogDebug($"Ignoring retained state message on topic {topic}.");
+                            break;
+                        }
                         if (_switchUniqIds.ContainsKey(entity))
                         {
                             await SendSwitchDataToApi(entity, "state", payload);
@@ -357,15 +365,18 @@ namespace garge_operator.Services
                 var switchExists = _switches.Any(s => s.Name == switchConfig.UniqId);
                 if (!switchExists)
                 {
-                    // Create a new switch
                     var createSwitchData = new Switch
                     {
                         Name = switchConfig.UniqId,
                         Type = switchConfig.Device.Model
                     };
+                    // Add optimistically before the async call to prevent a duplicate creation
+                    // if a second config message arrives before TryCreateSwitch returns.
+                    // Rolled back on genuine failure; 409 (already exists) is treated as success.
+                    _switches.Add(createSwitchData);
                     var created = await TryCreateSwitch(createSwitchData);
-                    if (created)
-                        _switches.Add(createSwitchData);
+                    if (!created)
+                        _switches.Remove(createSwitchData);
                 }
                 _switchUniqIds[switchConfig.UniqId] = switchConfig.UniqId;
                 _logger.LogDebug("Stored uniq_id for switch {UniqId}", switchConfig.UniqId);
@@ -494,7 +505,7 @@ namespace garge_operator.Services
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
             {
                 _logger.LogWarning($"Switch already exists: {createSwitchData.Name}");
-                return false;
+                return true;
             }
             catch (Exception ex)
             {
