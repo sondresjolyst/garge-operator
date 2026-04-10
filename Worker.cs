@@ -87,6 +87,12 @@ public class Worker : BackgroundService
                 continue;
             }
 
+            if (!rule.IsEnabled)
+            {
+                _logger.LogInformation("Skipping rule {RuleId} because it is disabled.", rule.Id);
+                continue;
+            }
+
             // Get latest sensor value
             var sensorResponse = await client.GetAsync($"{apiBaseUrl}/api/sensors/{rule.SensorId}/latest-data", stoppingToken);
             if (!sensorResponse.IsSuccessStatusCode)
@@ -166,6 +172,17 @@ public class Worker : BackgroundService
             await _mqttService.PublishSwitchDataAsync(topic, action);
             _lastPublishedActions[rule.TargetId] = action;
             _logger.LogInformation("Published action '{Action}' to switch {SwitchName} (ID: {TargetId}) due to automation rule {RuleId}.", action, targetSwitch.Name, rule.TargetId, rule.Id);
+
+            try
+            {
+                var triggeredResponse = await client.PatchAsync($"{apiBaseUrl}/api/automation/{rule.Id}/triggered", null, stoppingToken);
+                if (!triggeredResponse.IsSuccessStatusCode)
+                    _logger.LogWarning("Failed to mark rule {RuleId} as triggered. Status: {StatusCode}", rule.Id, triggeredResponse.StatusCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not update LastTriggeredAt for rule {RuleId}.", rule.Id);
+            }
         }
     }
 }
