@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.4](https://github.com/sondresjolyst/garge-operator/compare/v1.2.3...v1.2.4) (2026-04-09)
+
+
+### Bug Fixes
+
+* ignore retained state messages on reconnect ([#46](https://github.com/sondresjolyst/garge-operator/issues/46)) ([8695e25](https://github.com/sondresjolyst/garge-operator/commit/8695e25f75fc5afea1033df4f20d427c2af04de8))
+* prevent duplicate switch creation on rapid config messages ([#47](https://github.com/sondresjolyst/garge-operator/issues/47)) ([6864f1c](https://github.com/sondresjolyst/garge-operator/commit/6864f1ca076cac1505d8a54adaf636737085a669))
+
 ## [1.2.3](https://github.com/sondresjolyst/garge-operator/compare/v1.2.2...v1.2.3) (2026-04-08)
 
 
