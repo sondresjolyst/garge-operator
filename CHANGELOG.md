@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/sondresjolyst/garge-operator/compare/v1.2.4...v1.3.0) (2026-04-10)
+
+
+### Features
+
+* skip disabled automation rules and record last triggered timestamp ([#51](https://github.com/sondresjolyst/garge-operator/issues/51)) ([92296f8](https://github.com/sondresjolyst/garge-operator/commit/92296f854313142f309c824d9e15f4dbf02f6b04))
+
 ## [1.2.4](https://github.com/sondresjolyst/garge-operator/compare/v1.2.3...v1.2.4) (2026-04-09)
 
 
