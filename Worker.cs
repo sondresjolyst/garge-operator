@@ -101,9 +101,21 @@ public class Worker : BackgroundService
                     }
                     else
                     {
-                        // Timer still active — re-enforce ON in case MQTT state was lost
-                        _logger.LogInformation("Startup: timer still active for rule {RuleId}, re-enforcing ON.", rule.Id);
-                        await _mqttService.PublishSwitchDataAsync(topic, "on");
+                        // Timer still active — re-enforce state, gated by price condition if set
+                        bool priceOk = true;
+                        if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
+                            rule.ElectricityPriceThreshold.HasValue &&
+                            !string.IsNullOrEmpty(rule.ElectricityPriceArea))
+                        {
+                            var price = await GetCurrentPriceAsync(client, apiBaseUrl, rule.ElectricityPriceArea, stoppingToken);
+                            if (price.HasValue)
+                                priceOk = EvaluateCondition(price.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
+                        }
+
+                        var startupDesired = priceOk ? "on" : "off";
+                        _logger.LogInformation("Startup: timer active for rule {RuleId}, enforcing '{Action}' (priceOk={PriceOk}).", rule.Id, startupDesired, priceOk);
+                        await _mqttService.PublishSwitchDataAsync(topic, startupDesired);
+                        _lastPublishedActions[rule.TargetId] = startupDesired;
                     }
                 }
                 // If TimerActivatedAt is null the rule is idle — no action needed on startup
@@ -188,7 +200,25 @@ public class Worker : BackgroundService
                     }
                     else
                     {
-                        _logger.LogInformation("Rule {RuleId}: timer still running ({Elapsed:hh\\:mm} / {Duration}h), skipping.", rule.Id, elapsed, rule.TimerDurationHours.Value);
+                        // Timer still running — gate socket by price condition (sensor is trigger-only)
+                        bool priceOk = true;
+                        if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
+                            rule.ElectricityPriceThreshold.HasValue &&
+                            !string.IsNullOrEmpty(rule.ElectricityPriceArea))
+                        {
+                            var price = await GetCurrentPriceAsync(client, apiBaseUrl, rule.ElectricityPriceArea, stoppingToken);
+                            if (price.HasValue)
+                                priceOk = EvaluateCondition(price.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
+                        }
+
+                        var desired = priceOk ? "on" : "off";
+                        var last = _lastPublishedActions.GetValueOrDefault(rule.TargetId);
+                        if (last != desired)
+                        {
+                            _logger.LogInformation("Rule {RuleId}: timer running, price gate changed → '{Action}'.", rule.Id, desired);
+                            await _mqttService.PublishSwitchDataAsync(topic, desired);
+                            _lastPublishedActions[rule.TargetId] = desired;
+                        }
                     }
                     continue;
                 }
