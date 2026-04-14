@@ -13,8 +13,6 @@ permissions:
 jobs:
   release-please:
     name: Release Please
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38
-        with:
-          release-type: simple
+    uses: equinor/ops-actions/.github/workflows/release-please.yml@6f3c4901194b286f11800f60fc034417e2c8480a # v9.36.0
+    with:
+      release_type: simple

@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.3.0](https://github.com/sondresjolyst/garge-operator/compare/v1.2.4...v1.3.0) (2026-04-10)
+
+
+### Features
+
+* skip disabled automation rules and record last triggered timestamp ([#51](https://github.com/sondresjolyst/garge-operator/issues/51)) ([92296f8](https://github.com/sondresjolyst/garge-operator/commit/92296f854313142f309c824d9e15f4dbf02f6b04))
+
+## [1.2.4](https://github.com/sondresjolyst/garge-operator/compare/v1.2.3...v1.2.4) (2026-04-09)
+
+
+### Bug Fixes
+
+* ignore retained state messages on reconnect ([#46](https://github.com/sondresjolyst/garge-operator/issues/46)) ([8695e25](https://github.com/sondresjolyst/garge-operator/commit/8695e25f75fc5afea1033df4f20d427c2af04de8))
+* prevent duplicate switch creation on rapid config messages ([#47](https://github.com/sondresjolyst/garge-operator/issues/47)) ([6864f1c](https://github.com/sondresjolyst/garge-operator/commit/6864f1ca076cac1505d8a54adaf636737085a669))
+
+## [1.2.3](https://github.com/sondresjolyst/garge-operator/compare/v1.2.2...v1.2.3) (2026-04-08)
+
+
+### Bug Fixes
+
+* skip battery sensor creation, derive voltage sensor name for routing ([905c1e5](https://github.com/sondresjolyst/garge-operator/commit/905c1e577f50fbe44f219437ea5957aeb544a47c))
+
+## [1.2.2](https://github.com/sondresjolyst/garge-operator/compare/v1.2.1...v1.2.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* update deserialisation for ReferenceHandler.IgnoreCycles ([#36](https://github.com/sondresjolyst/garge-operator/issues/36)) ([39be2ba](https://github.com/sondresjolyst/garge-operator/commit/39be2baae80844161c83831739c347291bc32dbe))
+
 ## [1.2.1](https://github.com/sondresjolyst/garge-operator/compare/v1.2.0...v1.2.1) (2026-03-27)
 
 
