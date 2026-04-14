@@ -15,5 +15,7 @@
         public double? ElectricityPriceThreshold { get; set; }
         public string? ElectricityPriceArea { get; set; }
         public string? ElectricityPriceOperator { get; set; }
+        public double? TimerDurationHours { get; set; }
+        public DateTime? TimerActivatedAt { get; set; }
     }
 }
