@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/sondresjolyst/garge-operator/compare/v1.3.0...v1.4.0) (2026-04-14)
+
+
+### Features
+
+* **automations:** evaluate electricity price conditions in worker ([#57](https://github.com/sondresjolyst/garge-operator/issues/57)) ([a96649c](https://github.com/sondresjolyst/garge-operator/commit/a96649c52ef468aa9bb6c1dd0c41577cc3394a1d))
+* **automations:** timed auto-off logic in worker ([#58](https://github.com/sondresjolyst/garge-operator/issues/58)) ([f8fb44d](https://github.com/sondresjolyst/garge-operator/commit/f8fb44d8929c8a8c7befe3e66cde6a525798ad9c))
+
 ## [1.3.0](https://github.com/sondresjolyst/garge-operator/compare/v1.2.4...v1.3.0) (2026-04-10)
 
 
