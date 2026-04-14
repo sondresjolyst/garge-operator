@@ -12,6 +12,9 @@ public class Worker : BackgroundService
     // Cache last published action per switchId
     private readonly Dictionary<int, string> _lastPublishedActions = new();
 
+    // Cache current electricity price per area (keyed by area, valid for current delivery hour)
+    private readonly Dictionary<string, (double Value, DateTime ValidUntil)> _priceCache = new();
+
     public Worker(
         ILogger<Worker> logger,
         MqttService mqttService,
@@ -112,8 +115,8 @@ public class Worker : BackgroundService
 
             _logger.LogInformation("Evaluating rule {RuleId}: sensorValue={SensorValue}, condition={Condition}, threshold={Threshold}, action={Action}", rule.Id, sensorValue, rule.Condition, rule.Threshold, rule.Action);
 
-            // Evaluate condition
-            bool conditionMet = rule.Condition switch
+            // Evaluate sensor condition
+            bool sensorConditionMet = rule.Condition switch
             {
                 "<" => sensorValue < rule.Threshold,
                 ">" => sensorValue > rule.Threshold,
@@ -123,6 +126,42 @@ public class Worker : BackgroundService
                 "!=" => sensorValue != rule.Threshold,
                 _ => false
             };
+
+            _logger.LogInformation("Rule {RuleId} sensorConditionMet={ConditionMet}", rule.Id, sensorConditionMet);
+
+            // Evaluate optional electricity price condition
+            bool conditionMet = sensorConditionMet;
+            if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
+                rule.ElectricityPriceThreshold.HasValue &&
+                !string.IsNullOrEmpty(rule.ElectricityPriceArea))
+            {
+                var currentPrice = await GetCurrentPriceAsync(client, apiBaseUrl!, rule.ElectricityPriceArea, stoppingToken);
+                if (currentPrice.HasValue)
+                {
+                    bool priceConditionMet = rule.ElectricityPriceCondition switch
+                    {
+                        "<" => currentPrice.Value < rule.ElectricityPriceThreshold.Value,
+                        ">" => currentPrice.Value > rule.ElectricityPriceThreshold.Value,
+                        "<=" => currentPrice.Value <= rule.ElectricityPriceThreshold.Value,
+                        ">=" => currentPrice.Value >= rule.ElectricityPriceThreshold.Value,
+                        "==" => currentPrice.Value == rule.ElectricityPriceThreshold.Value,
+                        _ => false
+                    };
+
+                    _logger.LogInformation("Rule {RuleId} priceConditionMet={PriceConditionMet} (price={Price}, condition={Cond}, threshold={Threshold})",
+                        rule.Id, priceConditionMet, currentPrice.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
+
+                    var logicalOp = (rule.ElectricityPriceOperator ?? "AND").ToUpperInvariant();
+                    conditionMet = logicalOp == "OR"
+                        ? sensorConditionMet || priceConditionMet
+                        : sensorConditionMet && priceConditionMet;
+                }
+                else
+                {
+                    _logger.LogWarning("Rule {RuleId}: could not fetch electricity price for area {Area}, skipping.", rule.Id, rule.ElectricityPriceArea);
+                    continue;
+                }
+            }
 
             _logger.LogInformation("Rule {RuleId} conditionMet={ConditionMet}", rule.Id, conditionMet);
 
@@ -183,6 +222,38 @@ public class Worker : BackgroundService
             {
                 _logger.LogWarning(ex, "Could not update LastTriggeredAt for rule {RuleId}.", rule.Id);
             }
+        }
+    }
+
+    private async Task<double?> GetCurrentPriceAsync(HttpClient client, string apiBaseUrl, string area, CancellationToken stoppingToken)
+    {
+        var now = DateTime.UtcNow;
+
+        // Return cached value if still valid for current delivery hour
+        if (_priceCache.TryGetValue(area, out var cached) && cached.ValidUntil > now)
+            return cached.Value;
+
+        try
+        {
+            var priceResponse = await client.GetAsync($"{apiBaseUrl}/api/electricity/current-price?area={area}", stoppingToken);
+            if (!priceResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to fetch current price for area {Area}. Status: {StatusCode}", area, priceResponse.StatusCode);
+                return null;
+            }
+
+            var priceJson = await priceResponse.Content.ReadAsStringAsync(stoppingToken);
+            var priceDoc = JsonDocument.Parse(priceJson).RootElement;
+            var value = priceDoc.GetProperty("value").GetDouble();
+            var deliveryEnd = priceDoc.GetProperty("deliveryEnd").GetDateTime().ToUniversalTime();
+
+            _priceCache[area] = (value, deliveryEnd);
+            return value;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching current price for area {Area}.", area);
+            return null;
         }
     }
 }

@@ -11,5 +11,9 @@
         public double Threshold { get; set; }
         public required string Action { get; set; }
         public bool IsEnabled { get; set; } = true;
+        public string? ElectricityPriceCondition { get; set; }
+        public double? ElectricityPriceThreshold { get; set; }
+        public string? ElectricityPriceArea { get; set; }
+        public string? ElectricityPriceOperator { get; set; }
     }
 }
