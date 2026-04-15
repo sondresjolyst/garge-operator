@@ -79,7 +79,7 @@ public class Worker : BackgroundService
 
         foreach (var rule in rules)
         {
-            if (!string.Equals(rule.TargetType, "Switch", StringComparison.OrdinalIgnoreCase) || !rule.IsEnabled)
+            if (!rule.IsEnabled)
                 continue;
 
             var targetSwitch = GetSwitch(rule.TargetId);
@@ -163,12 +163,6 @@ public class Worker : BackgroundService
         foreach (var rule in rules)
         {
             _logger.LogInformation("Automation Rule: {Rule}", JsonSerializer.Serialize(rule));
-
-            if (!string.Equals(rule.TargetType, "Switch", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("Skipping rule {RuleId} because TargetType is not 'Switch'.", rule.Id);
-                continue;
-            }
 
             if (!rule.IsEnabled)
             {
