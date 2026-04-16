@@ -79,11 +79,17 @@ public class Worker : BackgroundService
 
         foreach (var rule in rules)
         {
-            if (!string.Equals(rule.TargetType, "Switch", StringComparison.OrdinalIgnoreCase) || !rule.IsEnabled)
+            if (!rule.IsEnabled)
                 continue;
 
             var targetSwitch = GetSwitch(rule.TargetId);
             if (targetSwitch == null) continue;
+
+            if (!new[] { "switch", "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
+                continue;
+            }
 
             var topic = $"garge/devices/{targetSwitch.Name}/set";
 
@@ -164,12 +170,6 @@ public class Worker : BackgroundService
         {
             _logger.LogInformation("Automation Rule: {Rule}", JsonSerializer.Serialize(rule));
 
-            if (!string.Equals(rule.TargetType, "Switch", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("Skipping rule {RuleId} because TargetType is not 'Switch'.", rule.Id);
-                continue;
-            }
-
             if (!rule.IsEnabled)
             {
                 _logger.LogInformation("Skipping rule {RuleId} because it is disabled.", rule.Id);
@@ -180,6 +180,12 @@ public class Worker : BackgroundService
             if (targetSwitch == null)
             {
                 _logger.LogWarning("Switch with ID {TargetId} not found in local list.", rule.TargetId);
+                continue;
+            }
+
+            if (!new[] { "switch", "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
                 continue;
             }
 
