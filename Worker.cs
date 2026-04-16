@@ -85,6 +85,12 @@ public class Worker : BackgroundService
             var targetSwitch = GetSwitch(rule.TargetId);
             if (targetSwitch == null) continue;
 
+            if (!new[] { "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
+                continue;
+            }
+
             var topic = $"garge/devices/{targetSwitch.Name}/set";
 
             if (rule.TimerDurationHours.HasValue)
@@ -174,6 +180,12 @@ public class Worker : BackgroundService
             if (targetSwitch == null)
             {
                 _logger.LogWarning("Switch with ID {TargetId} not found in local list.", rule.TargetId);
+                continue;
+            }
+
+            if (!new[] { "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
                 continue;
             }
 
