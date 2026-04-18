@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.4.1](https://github.com/sondresjolyst/garge-operator/compare/v1.4.0...v1.4.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* automation socket target type ([#63](https://github.com/sondresjolyst/garge-operator/issues/63)) ([c8f5804](https://github.com/sondresjolyst/garge-operator/commit/c8f5804adc3e34c7490529fc54b28089eb93eef7))
+* **worker:** accept any switch type as automation target ([#62](https://github.com/sondresjolyst/garge-operator/issues/62)) ([630d6c9](https://github.com/sondresjolyst/garge-operator/commit/630d6c9e0030a57a8ff27590f63c068fb5c912c8))
+
+## [1.4.0](https://github.com/sondresjolyst/garge-operator/compare/v1.3.0...v1.4.0) (2026-04-14)
+
+
+### Features
+
+* **automations:** evaluate electricity price conditions in worker ([#57](https://github.com/sondresjolyst/garge-operator/issues/57)) ([a96649c](https://github.com/sondresjolyst/garge-operator/commit/a96649c52ef468aa9bb6c1dd0c41577cc3394a1d))
+* **automations:** timed auto-off logic in worker ([#58](https://github.com/sondresjolyst/garge-operator/issues/58)) ([f8fb44d](https://github.com/sondresjolyst/garge-operator/commit/f8fb44d8929c8a8c7befe3e66cde6a525798ad9c))
+
 ## [1.3.0](https://github.com/sondresjolyst/garge-operator/compare/v1.2.4...v1.3.0) (2026-04-10)
 
 
