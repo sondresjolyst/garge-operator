@@ -85,7 +85,7 @@ public class Worker : BackgroundService
             var targetSwitch = GetSwitch(rule.TargetId);
             if (targetSwitch == null) continue;
 
-            if (!new[] { "switch", "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            if (!new[] { "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
                 continue;
@@ -183,7 +183,7 @@ public class Worker : BackgroundService
                 continue;
             }
 
-            if (!new[] { "switch", "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            if (!new[] { "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
                 continue;
