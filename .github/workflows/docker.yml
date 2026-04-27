@@ -19,7 +19,7 @@ permissions:
 jobs:
   dev:
     if: github.ref == 'refs/heads/development'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@6f3c4901194b286f11800f60fc034417e2c8480a # v9.36.0
+    uses: equinor/ops-actions/.github/workflows/docker.yml@39749d0c32762076499120f881e963687374420c # v9.37.1
     secrets:
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
@@ -31,7 +31,7 @@ jobs:
 
   prod:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@6f3c4901194b286f11800f60fc034417e2c8480a # v9.36.0
+    uses: equinor/ops-actions/.github/workflows/docker.yml@39749d0c32762076499120f881e963687374420c # v9.37.1
     secrets:
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
