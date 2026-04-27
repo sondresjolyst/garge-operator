@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/sondresjolyst/garge-operator/compare/v1.4.1...v1.4.2) (2026-04-18)
+
+
+### Bug Fixes
+
+* automation socket target type ([#66](https://github.com/sondresjolyst/garge-operator/issues/66)) ([#67](https://github.com/sondresjolyst/garge-operator/issues/67)) ([fc20f40](https://github.com/sondresjolyst/garge-operator/commit/fc20f40148d7f9e128ec1627e87fe775ab8f7248))
+
 ## [1.4.1](https://github.com/sondresjolyst/garge-operator/compare/v1.4.0...v1.4.1) (2026-04-16)
 
 
