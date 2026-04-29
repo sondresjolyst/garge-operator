@@ -13,6 +13,6 @@ permissions:
 jobs:
   release-please:
     name: Release Please
-    uses: equinor/ops-actions/.github/workflows/release-please.yml@39749d0c32762076499120f881e963687374420c # v9.37.1
+    uses: equinor/ops-actions/.github/workflows/release-please.yml@6f3c4901194b286f11800f60fc034417e2c8480a # v9.36.0
     with:
       release_type: simple

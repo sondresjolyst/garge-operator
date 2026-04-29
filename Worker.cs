@@ -306,7 +306,14 @@ public class Worker : BackgroundService
         return (client, rules);
     }
 
-    private Switch? GetSwitch(int targetId) => _mqttService.GetSwitch(targetId);
+    private Switch? GetSwitch(int targetId)
+    {
+        var switches = _mqttService
+            .GetType()
+            .GetField("_switches", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
+            .GetValue(_mqttService) as List<Switch>;
+        return switches?.FirstOrDefault(s => s.Id == targetId);
+    }
 
     private async Task<double?> GetSensorValueAsync(HttpClient client, string apiBaseUrl, int sensorId, CancellationToken stoppingToken)
     {
