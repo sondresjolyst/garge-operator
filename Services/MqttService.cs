@@ -87,6 +87,8 @@ namespace garge_operator.Services
             }
         }
 
+        public Switch? GetSwitch(int targetId) => _switches.FirstOrDefault(s => s.Id == targetId);
+
         public async Task ConnectAsync()
         {
             // Ensure login is successful before connecting to MQTT broker
@@ -271,14 +273,14 @@ namespace garge_operator.Services
                                 {
                                     if (payload.TrimStart().StartsWith("{") || payload.TrimStart().StartsWith("["))
                                     {
-                                        var data = JsonSerializer.Deserialize<Dictionary<string, object>>(payload);
-                                        if (data != null && data.TryGetValue("value", out var value) && value != null)
+                                        var data = JsonSerializer.Deserialize<SensorStatePayload>(payload);
+                                        if (data != null && data.Value.ValueKind != JsonValueKind.Undefined)
                                         {
-                                            await SendDataToApi(entity, value.ToString());
+                                            await SendDataToApi(entity, data.Value.ToString());
                                         }
                                         else
                                         {
-                                            _logger.LogWarning($"Sensor state payload for {entity} did not contain a valid 'value' property.");
+                                            _logger.LogWarning("Sensor state payload for {Entity} did not contain a valid 'value' property.", entity);
                                         }
                                     }
                                     else
@@ -618,7 +620,7 @@ namespace garge_operator.Services
         {
             try
             {
-                _logger.LogInformation($"Preparing to send data for sensor {uniqId} to API with value: {value}");
+                _logger.LogInformation("Preparing to send data for sensor {SensorId} to API.", uniqId);
 
                 var token = await GetJwtTokenAsync();
                 var client = _httpClientFactory.CreateClient();
