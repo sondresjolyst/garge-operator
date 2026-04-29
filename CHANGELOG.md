@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/sondresjolyst/garge-operator/compare/v1.4.2...v1.4.3) (2026-04-29)
+
+
+### Bug Fixes
+
+* re-apply development changes with conventional commits ([#79](https://github.com/sondresjolyst/garge-operator/issues/79)) ([5d33fba](https://github.com/sondresjolyst/garge-operator/commit/5d33fba1c102062c5406c2c2fe424fad9075df26))
+
 ## [1.4.2](https://github.com/sondresjolyst/garge-operator/compare/v1.4.1...v1.4.2) (2026-04-18)
 
 
