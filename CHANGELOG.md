@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.4](https://github.com/sondresjolyst/garge-operator/compare/v1.4.3...v1.4.4) (2026-04-30)
+
+
+### Bug Fixes
+
+* add JsonPropertyName attribute to SensorStatePayload.Value ([#81](https://github.com/sondresjolyst/garge-operator/issues/81)) ([2100f4c](https://github.com/sondresjolyst/garge-operator/commit/2100f4cd323bb8777efae59cad8d936493e50a74))
+* add JsonPropertyName attribute to SensorStatePayload.Value ([#81](https://github.com/sondresjolyst/garge-operator/issues/81)) ([b17319c](https://github.com/sondresjolyst/garge-operator/commit/b17319cc3767922aaf724fd72c0fbbaf64b8f1db))
+
 ## [1.4.3](https://github.com/sondresjolyst/garge-operator/compare/v1.4.2...v1.4.3) (2026-04-29)
 
 
