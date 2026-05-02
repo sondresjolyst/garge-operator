@@ -96,6 +96,7 @@ namespace garge_operator.Services
                 return _switches.FirstOrDefault(s => s.Id == targetId);
             }
         }
+
         public async Task ConnectAsync()
         {
             // Ensure login is successful before connecting to MQTT broker
@@ -294,7 +295,7 @@ namespace garge_operator.Services
                             {
                                 _lastPublishedSwitchStates[entity] = payload.ToUpperInvariant();
                             }
-                            _logger.LogInformation("Updated local switch state for '{Entity}' to '{State}'.", entity, payload.ToUpperInvariant());
+                            _logger.LogInformation("Updated local switch state for {Entity} to {State}.", entity, payload.ToUpperInvariant());
                         }
                         else if (isSensorEntity)
                         {
@@ -308,14 +309,14 @@ namespace garge_operator.Services
                                 {
                                     if (payload.TrimStart().StartsWith("{") || payload.TrimStart().StartsWith("["))
                                     {
-                                        var data = JsonSerializer.Deserialize<Dictionary<string, object>>(payload);
-                                        if (data != null && data.TryGetValue("value", out var value) && value != null)
+                                        var data = JsonSerializer.Deserialize<SensorStatePayload>(payload);
+                                        if (data != null && data.Value.ValueKind != JsonValueKind.Undefined)
                                         {
-                                            await SendDataToApi(entity, value.ToString());
+                                            await SendDataToApi(entity, data.Value.ToString());
                                         }
                                         else
                                         {
-                                            _logger.LogWarning($"Sensor state payload for {entity} did not contain a valid 'value' property.");
+                                            _logger.LogWarning("Sensor state payload for {Entity} did not contain a valid 'value' property.", entity);
                                         }
                                     }
                                     else
@@ -332,7 +333,7 @@ namespace garge_operator.Services
                         }
                         else
                         {
-                            _logger.LogWarning("Entity '{Entity}' not found in switch or sensor lists.", entity);
+                            _logger.LogWarning("Entity {Entity} not found in switch or sensor lists.", entity);
                         }
                         break;
                 }
@@ -684,7 +685,7 @@ namespace garge_operator.Services
         {
             try
             {
-                _logger.LogInformation($"Preparing to send data for sensor {uniqId} to API with value: {value}");
+                _logger.LogInformation("Preparing to send data for sensor {SensorId} to API.", uniqId);
 
                 var token = await GetJwtTokenAsync();
                 var client = _httpClientFactory.CreateClient();
@@ -702,7 +703,7 @@ namespace garge_operator.Services
                 else
                 {
                     var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to send data for sensor {SensorId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {Response}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
+                    _logger.LogError("Failed to send data for sensor {SensorId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
                 }
             }
             catch (Exception ex)
@@ -750,7 +751,7 @@ namespace garge_operator.Services
                 else
                 {
                     var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to send battery health for voltage sensor {VoltageSensorName} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {Response}", voltageSensorName, response.StatusCode, response.ReasonPhrase, responseContent);
+                    _logger.LogError("Failed to send battery health for voltage sensor {VoltageSensorName} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", voltageSensorName, response.StatusCode, response.ReasonPhrase, responseContent);
                 }
             }
             catch (Exception ex)
@@ -763,7 +764,7 @@ namespace garge_operator.Services
         {
             try
             {
-                _logger.LogInformation("Preparing to send data for switch {SwitchId} to API with key: {Key}", uniqId, key);
+                _logger.LogInformation("Preparing to send data for switch {UniqId} to API with key: {Key}", uniqId, key);
 
                 var token = await GetJwtTokenAsync();
                 var client = _httpClientFactory.CreateClient();
@@ -776,12 +777,12 @@ namespace garge_operator.Services
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Successfully sent data for switch {SwitchId} to API.", uniqId);
+                    _logger.LogInformation("Successfully sent data for switch {UniqId} to API.", uniqId);
                 }
                 else
                 {
                     var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to send data for switch {SwitchId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {Response}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
+                    _logger.LogError("Failed to send data for switch {UniqId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
                 }
             }
             catch (Exception ex)
@@ -861,7 +862,7 @@ namespace garge_operator.Services
                     if (_lastPublishedSwitchStates.TryGetValue(switchName, out var currentState) && currentState == payload)
                     {
                         var sanitizedPayload = payload.Replace("\r", "").Replace("\n", "");
-                        _logger.LogInformation("Skipping publish for switch '{SwitchName}' as the state '{State}' is unchanged.", switchName, sanitizedPayload);
+                        _logger.LogInformation("Skipping publish for switch {SwitchName} as the state {State} is unchanged.", switchName, sanitizedPayload);
                         return;
                     }
 
@@ -882,7 +883,7 @@ namespace garge_operator.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error publishing Switch data to topic '{Topic}'.", topic);
+                _logger.LogError(ex, "Error publishing Switch data to topic {Topic}.", topic);
             }
         }
 
@@ -921,7 +922,7 @@ namespace garge_operator.Services
                 else
                 {
                     var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to register as a subscriber. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {Response}", response.StatusCode, response.ReasonPhrase, responseContent);
+                    _logger.LogError("Failed to register as a subscriber. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", response.StatusCode, response.ReasonPhrase, responseContent);
                 }
             }
             catch (Exception ex)
@@ -964,7 +965,7 @@ namespace garge_operator.Services
                     await PublishSwitchDataAsync(topic, state);
                     var sanitizedState = state.Replace("\r", "").Replace("\n", "");
                     var sanitizedTopic = topic.Replace("\r", "").Replace("\n", "");
-                    _logger.LogInformation("Published switch state '{State}' to topic '{Topic}'.", sanitizedState, sanitizedTopic);
+                    _logger.LogInformation("Published switch state {State} to topic {Topic}.", sanitizedState, sanitizedTopic);
                 }
                 else
                 {
