@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/sondresjolyst/garge-operator/compare/v1.4.4...v1.5.0) (2026-05-02)
+
+
+### Features
+
+* automated test suite ([#86](https://github.com/sondresjolyst/garge-operator/issues/86)) ([ed51d88](https://github.com/sondresjolyst/garge-operator/commit/ed51d88cd124cb7c66d775b2955a0a33ce925874))
+
+
+### Bug Fixes
+
+* address security advisory GHSA-q83g-3j26-qh5x ([#85](https://github.com/sondresjolyst/garge-operator/issues/85)) ([da2c8b8](https://github.com/sondresjolyst/garge-operator/commit/da2c8b805f409a774fec5ebe61f3a23f6b4a8041))
+
 ## [1.4.4](https://github.com/sondresjolyst/garge-operator/compare/v1.4.3...v1.4.4) (2026-04-30)
 
 
