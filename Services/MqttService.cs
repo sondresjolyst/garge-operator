@@ -22,11 +22,15 @@ namespace garge_operator.Services
         private Dictionary<string, string> _sensorUniqIds;
         private Dictionary<string, string> _switchUniqIds;
         private readonly HashSet<string> _batteryHealthUniqIds = new();
-        private readonly HashSet<string> _recentlyPublishedStates = new();
         private readonly object _stateLock = new();
-        private readonly string _applicationId = Guid.NewGuid().ToString();
+        private readonly object _listsLock = new();
         private readonly Dictionary<string, string> _lastPublishedSwitchStates = new();
         private readonly HashSet<string> _subscribedTopics = new();
+
+        // JWT token cache
+        private string? _cachedToken;
+        private DateTime _tokenExpiry = DateTime.MinValue;
+        private readonly SemaphoreSlim _tokenCacheLock = new(1, 1);
 
         public MqttService(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<MqttService> logger)
         {
@@ -59,11 +63,9 @@ namespace garge_operator.Services
             if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
                 throw new ArgumentException("Mqtt:Username or Mqtt:Password not set in configuration.");
 
-            // Create the client
             var factory = new MqttFactory();
             _mqttClient = factory.CreateManagedMqttClient();
 
-            // Build the client options
             var clientOptions = new MqttClientOptionsBuilder()
                 .WithClientId($"garge-operator-{Guid.NewGuid()}")
                 .WithTcpServer(broker, port)
@@ -87,7 +89,13 @@ namespace garge_operator.Services
             }
         }
 
-        public Switch? GetSwitch(int targetId) => _switches.FirstOrDefault(s => s.Id == targetId);
+        public Switch? GetSwitch(int targetId)
+        {
+            lock (_listsLock)
+            {
+                return _switches.FirstOrDefault(s => s.Id == targetId);
+            }
+        }
 
         public async Task ConnectAsync()
         {
@@ -126,24 +134,24 @@ namespace garge_operator.Services
                 _logger.LogInformation("Subscribed to garge/devices/+/config, garge/devices/+/+/config, state, set topics and device discovery events.");
             };
 
-            _mqttClient.DisconnectedAsync += async e =>
+            _mqttClient.DisconnectedAsync += e =>
             {
                 _logger.LogWarning("Disconnected from MQTT broker.");
                 if (e.Exception != null)
                     _logger.LogError(e.Exception, "MQTT client disconnected due to an error.");
                 else
                     _logger.LogWarning("MQTT client disconnected.");
-
-                // Attempt to reconnect
-                await Task.Delay(TimeSpan.FromSeconds(5));
-                _logger.LogInformation("Reconnecting to MQTT broker...");
-                await _mqttClient.StartAsync(_mqttClientOptions);
+                // IManagedMqttClient handles reconnection automatically.
+                return Task.CompletedTask;
             };
 
             // Connect to the broker
             _logger.LogInformation("Connecting to MQTT broker...");
             await _mqttClient.StartAsync(_mqttClientOptions);
         }
+
+        private static bool IsValidDeviceId(string id)
+            => !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^[a-zA-Z0-9_\-]+$");
 
         private async Task HandleDiscoveryEvent(string topic, string payload)
         {
@@ -156,7 +164,29 @@ namespace garge_operator.Services
                     return;
                 }
 
-                _logger.LogInformation("Handling discovery event for topic {Topic} with payload: {Payload}", topic, payload);
+                // Topic structure: garge/devices/{discoveredBy}/discovered_devices/{target}/discovered
+                var topicParts = topic.Split('/');
+                if (topicParts.Length < 6)
+                {
+                    _logger.LogWarning("Discovery topic has unexpected structure: {Topic}", topic);
+                    return;
+                }
+                var topicDiscoveredBy = topicParts[2];
+                var topicTarget = topicParts[4];
+
+                if (!string.Equals(devicePayload.DiscoveredBy, topicDiscoveredBy, StringComparison.Ordinal) ||
+                    !string.Equals(devicePayload.Target, topicTarget, StringComparison.Ordinal))
+                {
+                    _logger.LogWarning("Discovery payload fields don't match topic segments. Ignoring. Topic={Topic}", topic);
+                    return;
+                }
+                if (!IsValidDeviceId(devicePayload.DiscoveredBy) || !IsValidDeviceId(devicePayload.Target))
+                {
+                    _logger.LogWarning("Discovery payload contains invalid device IDs. Ignoring.");
+                    return;
+                }
+
+                _logger.LogInformation("Handling discovery event for topic {Topic}", topic);
 
                 await GrantDeviceControlAsync(devicePayload.DiscoveredBy, devicePayload.Target);
                 await PostDiscoveredDevice(devicePayload);
@@ -183,7 +213,7 @@ namespace garge_operator.Services
                 // Handle discovery event
                 if (topic.StartsWith("garge/devices/") && topic.Contains("/discovered_devices/") && topic.EndsWith("/discovered"))
                 {
-                    _logger.LogInformation("Received discovery event: {Payload}", payload);
+                    _logger.LogInformation("Received discovery event on topic {Topic}", topic);
                     await HandleDiscoveryEvent(topic, payload);
                     return;
                 }
@@ -199,14 +229,7 @@ namespace garge_operator.Services
                 string type = topicParts[^1]; // config, state, set
                 string entity = topicParts.Length == 5 ? topicParts[3] : deviceId; // entity if present, else deviceId
 
-                _logger.LogInformation("Raw config payload: {Payload}", payload);
-
-                // Ignore self-triggered messages
-                if (payload.Contains(_applicationId))
-                {
-                    _logger.LogInformation("Ignoring self-triggered MQTT message.");
-                    return;
-                }
+                _logger.LogInformation("Raw config payload received on topic {Topic}", topic);
 
                 switch (type)
                 {
@@ -221,7 +244,7 @@ namespace garge_operator.Services
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Error deserializing switch config payload: {Payload}", payload);
+                                _logger.LogError(ex, "Error deserializing switch config payload.");
                             }
                         }
                         else if (payload.Contains("\"stat_cla\"") && payload.Contains("\"stat_t\""))
@@ -234,12 +257,12 @@ namespace garge_operator.Services
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Error deserializing sensor config payload: {Payload}", payload);
+                                _logger.LogError(ex, "Error deserializing sensor config payload.");
                             }
                         }
                         else
                         {
-                            _logger.LogWarning("Received unknown or incomplete config payload: {Payload}", payload);
+                            _logger.LogWarning("Received unknown or incomplete config payload on topic {Topic}", topic);
                         }
                         break;
 
@@ -252,7 +275,20 @@ namespace garge_operator.Services
                             _logger.LogDebug("Ignoring retained state message on topic {Topic}.", topic);
                             break;
                         }
-                        if (_switchUniqIds.ContainsKey(entity))
+
+                        bool isSwitchEntity, isSensorEntity;
+                        lock (_listsLock)
+                        {
+                            isSwitchEntity = _switchUniqIds.ContainsKey(entity);
+                            isSensorEntity = _sensorUniqIds.ContainsKey(entity);
+                        }
+                        bool isBatteryHealth;
+                        lock (_listsLock)
+                        {
+                            isBatteryHealth = _batteryHealthUniqIds.Contains(entity);
+                        }
+
+                        if (isSwitchEntity)
                         {
                             await SendSwitchDataToApi(entity, "state", payload);
                             lock (_stateLock)
@@ -261,9 +297,9 @@ namespace garge_operator.Services
                             }
                             _logger.LogInformation("Updated local switch state for {Entity} to {State}.", entity, payload.ToUpperInvariant());
                         }
-                        else if (_sensorUniqIds.ContainsKey(entity))
+                        else if (isSensorEntity)
                         {
-                            if (_batteryHealthUniqIds.Contains(entity))
+                            if (isBatteryHealth)
                             {
                                 await SendBatteryHealthToApi(entity, payload);
                             }
@@ -316,19 +352,31 @@ namespace garge_operator.Services
         {
             try
             {
-                _logger.LogInformation("Current sensors: {Sensors}", string.Join(", ", _sensors.Select(s => s.Name)));
+                if (!IsValidDeviceId(sensorConfig.UniqId))
+                {
+                    _logger.LogWarning("Rejecting sensor config with invalid UniqId: {UniqId}", sensorConfig.UniqId);
+                    return;
+                }
 
                 // Battery health is not stored as a sensor; derive the voltage sensor name by convention.
                 if (sensorConfig.DevCla == "battery")
                 {
-                    _batteryHealthUniqIds.Add(sensorConfig.UniqId);
-                    _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
+                    lock (_listsLock)
+                    {
+                        _batteryHealthUniqIds.Add(sensorConfig.UniqId);
+                        _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
+                    }
                     _logger.LogDebug("Tracked battery health uniq_id {UniqId}", sensorConfig.UniqId);
                     return;
                 }
 
-                // Check if the sensor exists in the list
-                var sensorExists = _sensors.Any(s => s.Name == sensorConfig.UniqId);
+                bool sensorExists;
+                lock (_listsLock)
+                {
+                    _logger.LogInformation("Current sensors: {Sensors}", string.Join(", ", _sensors.Select(s => s.Name)));
+                    sensorExists = _sensors.Any(s => s.Name == sensorConfig.UniqId);
+                }
+
                 if (!sensorExists)
                 {
                     // Create a new sensor
@@ -341,16 +389,24 @@ namespace garge_operator.Services
                     var created = await TryCreateSensor(createSensorData);
                     if (created)
                     {
-                        // Add the new sensor to the list
-                        _sensors.Add(createSensorData);
+                        lock (_listsLock)
+                        {
+                            _sensors.Add(createSensorData);
+                        }
                     }
                 }
 
                 // Store the uniq_id for the sensor type
-                _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
+                lock (_listsLock)
+                {
+                    _sensorUniqIds[sensorConfig.UniqId] = sensorConfig.UniqId;
+                }
 
                 _logger.LogDebug("Stored uniq_id for sensor {UniqId}", sensorConfig.UniqId);
-                _logger.LogDebug("Current uniq_id keys: {Keys}", string.Join(", ", _sensorUniqIds.Keys));
+                lock (_listsLock)
+                {
+                    _logger.LogDebug("Current uniq_id keys: {Keys}", string.Join(", ", _sensorUniqIds.Keys));
+                }
             }
             catch (Exception ex)
             {
@@ -362,27 +418,54 @@ namespace garge_operator.Services
         {
             try
             {
-                _logger.LogInformation("Current switches: {Switches}", string.Join(", ", _switches.Select(s => s.Name)));
-                // Check if the switch exists in the list
-                var switchExists = _switches.Any(s => s.Name == switchConfig.UniqId);
-                if (!switchExists)
+                if (!IsValidDeviceId(switchConfig.UniqId))
                 {
-                    var createSwitchData = new Switch
+                    _logger.LogWarning("Rejecting switch config with invalid UniqId: {UniqId}", switchConfig.UniqId);
+                    return;
+                }
+                if (!switchConfig.CommandTopic.StartsWith("garge/devices/", StringComparison.Ordinal))
+                {
+                    _logger.LogWarning("Rejecting switch config with unexpected CommandTopic: {Topic}", switchConfig.CommandTopic);
+                    return;
+                }
+
+                bool switchExists;
+                Switch? createSwitchData = null;
+                lock (_listsLock)
+                {
+                    _logger.LogInformation("Current switches: {Switches}", string.Join(", ", _switches.Select(s => s.Name)));
+                    switchExists = _switches.Any(s => s.Name == switchConfig.UniqId);
+                    if (!switchExists)
                     {
-                        Name = switchConfig.UniqId,
-                        Type = switchConfig.Device.Model
-                    };
-                    // Add optimistically before the async call to prevent a duplicate creation
-                    // if a second config message arrives before TryCreateSwitch returns.
-                    // Rolled back on genuine failure; 409 (already exists) is treated as success.
-                    _switches.Add(createSwitchData);
+                        createSwitchData = new Switch
+                        {
+                            Name = switchConfig.UniqId,
+                            Type = switchConfig.Device.Model
+                        };
+                        // Add optimistically before the async call to prevent a duplicate creation
+                        // if a second config message arrives before TryCreateSwitch returns.
+                        // Rolled back on genuine failure; 409 (already exists) is treated as success.
+                        _switches.Add(createSwitchData);
+                    }
+                }
+
+                if (createSwitchData != null)
+                {
                     var created = await TryCreateSwitch(createSwitchData);
                     if (!created)
-                        _switches.Remove(createSwitchData);
+                    {
+                        lock (_listsLock)
+                        {
+                            _switches.Remove(createSwitchData);
+                        }
+                    }
                 }
-                _switchUniqIds[switchConfig.UniqId] = switchConfig.UniqId;
-                _logger.LogDebug("Stored uniq_id for switch {UniqId}", switchConfig.UniqId);
 
+                lock (_listsLock)
+                {
+                    _switchUniqIds[switchConfig.UniqId] = switchConfig.UniqId;
+                }
+                _logger.LogDebug("Stored uniq_id for switch {UniqId}", switchConfig.UniqId);
             }
             catch (Exception ex)
             {
@@ -452,7 +535,7 @@ namespace garge_operator.Services
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Posted discovered device: {DevicePayload}", JsonSerializer.Serialize(devicePayload));
+                    _logger.LogInformation("Posted discovered device: {DiscoveredBy} -> {Target}", devicePayload.DiscoveredBy, devicePayload.Target);
                 }
                 else
                 {
@@ -598,24 +681,6 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task CreateSensor(Sensor createSensorData)
-        {
-            try
-            {
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                var content = new StringContent(JsonSerializer.Serialize(createSensorData), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/sensors", content);
-                response.EnsureSuccessStatusCode();
-                _logger.LogInformation("Successfully created sensor: {SensorName}", createSensorData.Name);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error creating sensor.");
-            }
-        }
-
         private async Task SendDataToApi(string uniqId, string value)
         {
             try
@@ -627,17 +692,18 @@ namespace garge_operator.Services
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 var content = new StringContent(JsonSerializer.Serialize(new { value = value }), Encoding.UTF8, "application/json");
 
-                _logger.LogInformation("Sending data to API: {ApiBaseUrl}/api/sensors/name/{UniqId}/data", _apiBaseUrl, uniqId);
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/sensors/name/{uniqId}/data", content);
+                var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/data";
+                _logger.LogInformation("Sending data to API: {Url}", url);
+                var response = await client.PostAsync(url, content);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Successfully sent data for sensor {UniqId} to API.", uniqId);
+                    _logger.LogInformation("Successfully sent data for sensor {SensorId} to API.", uniqId);
                 }
                 else
                 {
                     var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to send data for sensor {UniqId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
+                    _logger.LogError("Failed to send data for sensor {SensorId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
                 }
             }
             catch (Exception ex)
@@ -656,7 +722,7 @@ namespace garge_operator.Services
                 var batteryPayload = JsonSerializer.Deserialize<BatteryHealthPayload>(payload);
                 if (batteryPayload == null)
                 {
-                    _logger.LogError("Failed to deserialize battery health payload for {SensorName}: {Payload}", sensorName, payload);
+                    _logger.LogError("Failed to deserialize battery health payload for {SensorName}.", sensorName);
                     return;
                 }
 
@@ -674,8 +740,9 @@ namespace garge_operator.Services
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 var content = new StringContent(JsonSerializer.Serialize(dto), Encoding.UTF8, "application/json");
 
-                _logger.LogInformation("Sending battery health to API: {ApiBaseUrl}/api/battery-health/name/{VoltageSensorName}", _apiBaseUrl, voltageSensorName);
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/battery-health/name/{voltageSensorName}", content);
+                var url = $"{_apiBaseUrl}/api/battery-health/name/{Uri.EscapeDataString(voltageSensorName)}";
+                _logger.LogInformation("Sending battery health to API: {Url}", url);
+                var response = await client.PostAsync(url, content);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -704,8 +771,9 @@ namespace garge_operator.Services
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 var content = new StringContent(JsonSerializer.Serialize(new { key, value }), Encoding.UTF8, "application/json");
 
-                _logger.LogInformation("Sending data to API: {ApiBaseUrl}/api/switches/name/{UniqId}/data", _apiBaseUrl, uniqId);
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/switches/name/{uniqId}/data", content);
+                var url = $"{_apiBaseUrl}/api/switches/name/{Uri.EscapeDataString(uniqId)}/data";
+                _logger.LogInformation("Sending data to API: {Url}", url);
+                var response = await client.PostAsync(url, content);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -723,16 +791,33 @@ namespace garge_operator.Services
             }
         }
 
-        public async Task<string> GetJwtTokenAsync()
+        private static DateTime ParseJwtExpiry(string token)
         {
             try
             {
+                var parts = token.Split('.');
+                if (parts.Length != 3) return DateTime.UtcNow.AddMinutes(14);
+                var padding = (4 - parts[1].Length % 4) % 4;
+                var base64 = parts[1].PadRight(parts[1].Length + padding, '=').Replace('-', '+').Replace('_', '/');
+                var json = Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+                var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("exp", out var expEl) && expEl.TryGetInt64(out var exp))
+                    return DateTimeOffset.FromUnixTimeSeconds(exp).UtcDateTime;
+            }
+            catch { }
+            return DateTime.UtcNow.AddMinutes(14);
+        }
+
+        public async Task<string> GetJwtTokenAsync()
+        {
+            await _tokenCacheLock.WaitAsync();
+            try
+            {
+                if (_cachedToken != null && DateTime.UtcNow < _tokenExpiry)
+                    return _cachedToken;
+
                 var client = _httpClientFactory.CreateClient();
-                var loginData = new
-                {
-                    Email = _configuration["Api:Email"],
-                    Password = _configuration["Api:Password"]
-                };
+                var loginData = new { Email = _configuration["Api:Email"], Password = _configuration["Api:Password"] };
                 var content = new StringContent(JsonSerializer.Serialize(loginData), Encoding.UTF8, "application/json");
                 var response = await client.PostAsync($"{_apiBaseUrl}/api/auth/login", content);
 
@@ -752,12 +837,18 @@ namespace garge_operator.Services
                     throw new Exception("Failed to retrieve JWT token.");
                 }
 
-                return tokenResponse.Token;
+                _cachedToken = tokenResponse.Token;
+                _tokenExpiry = ParseJwtExpiry(_cachedToken).AddSeconds(-60);
+                return _cachedToken;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving JWT token.");
                 throw;
+            }
+            finally
+            {
+                _tokenCacheLock.Release();
             }
         }
 
@@ -800,7 +891,7 @@ namespace garge_operator.Services
         {
             try
             {
-                var token = await GetJwtTokenAsync(); // Get the JWT token for authentication
+                var token = await GetJwtTokenAsync();
                 var client = _httpClientFactory.CreateClient();
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
@@ -812,10 +903,12 @@ namespace garge_operator.Services
                     return;
                 }
 
-                // Create the payload for the subscription
+                // Create the payload for the subscription, including webhook secret for garge-api
+                // (garge-api may ignore WebhookSecret if it does not yet support it — backwards-compatible)
                 var payload = new
                 {
-                    WebhookUrl = webhookUrl
+                    WebhookUrl = webhookUrl,
+                    WebhookSecret = _configuration["Webhook:Secret"]
                 };
 
                 // Send the POST request to the API's subscription endpoint
@@ -837,11 +930,12 @@ namespace garge_operator.Services
                 _logger.LogError(ex, "Error registering as a subscriber.");
             }
         }
+
         public async Task HandleWebhookDataAsync(WebhookPayload payload)
         {
             try
             {
-                _logger.LogDebug("Received webhook data for switch: {SwitchName}, value: {Value}", payload.Switch?.Name, payload.Value);
+                _logger.LogDebug("Received webhook data for switch: {SwitchName}", payload.Switch?.Name);
 
                 if (payload.Switch == null)
                 {
@@ -849,29 +943,24 @@ namespace garge_operator.Services
                     return;
                 }
 
-                if (payload.Value == _applicationId)
+                var switchName = payload.Switch.Name;
+                if (!IsValidDeviceId(switchName))
                 {
-                    _logger.LogInformation("Ignoring self-triggered webhook notification.");
+                    _logger.LogWarning("Webhook payload contains invalid switch name: {Name}", switchName);
                     return;
                 }
 
-                var switchName = payload.Switch.Name;
                 var state = payload.Value.ToUpperInvariant();
 
-                var topic = $"garge/devices/{switchName}/set";
-                lock (_stateLock)
+                bool knownSwitch;
+                lock (_listsLock)
                 {
-                    if (_recentlyPublishedStates.Contains($"{topic}:{state}"))
-                    {
-                        var sanitizedState = state.Replace("\r", "").Replace("\n", "");
-                        var sanitizedTopic = topic.Replace("\r", "").Replace("\n", "");
-                        _logger.LogInformation("Ignoring self-triggered event for topic {Topic} with state {State}.", sanitizedTopic, sanitizedState);
-                        _recentlyPublishedStates.Remove($"{topic}:{state}");
-                        return;
-                    }
+                    knownSwitch = _switchUniqIds.ContainsKey(switchName);
                 }
 
-                if (_switchUniqIds.TryGetValue(switchName, out var switchUniqId))
+                var topic = $"garge/devices/{switchName}/set";
+
+                if (knownSwitch)
                 {
                     await PublishSwitchDataAsync(topic, state);
                     var sanitizedState = state.Replace("\r", "").Replace("\n", "");
