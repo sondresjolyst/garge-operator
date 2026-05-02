@@ -24,4 +24,5 @@ RUN dotnet publish "./garge-operator.csproj" -c $BUILD_CONFIGURATION -o /app/pub
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+USER app
 ENTRYPOINT ["dotnet", "garge-operator.dll"]
