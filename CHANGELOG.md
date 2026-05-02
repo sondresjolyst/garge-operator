@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/sondresjolyst/garge-operator/compare/v1.5.0...v1.5.1) (2026-05-02)
+
+
+### Bug Fixes
+
+* skip non-timed rules in startup reconciliation when condition not met ([#89](https://github.com/sondresjolyst/garge-operator/issues/89)) ([5a93344](https://github.com/sondresjolyst/garge-operator/commit/5a93344fd111a87187be80ccf03f73d6602f6b1e))
+
 ## [1.5.0](https://github.com/sondresjolyst/garge-operator/compare/v1.4.4...v1.5.0) (2026-05-02)
 
 
