@@ -147,6 +147,12 @@ public class Worker : BackgroundService
                     }
                 }
 
+                if (rule.Action.ToLowerInvariant() != "on" && rule.Action.ToLowerInvariant() != "off")
+                {
+                    _logger.LogWarning("Rule {RuleId} has invalid action '{Action}', skipping.", rule.Id, rule.Action);
+                    continue;
+                }
+
                 var desiredAction = conditionMet ? rule.Action.ToLowerInvariant() : (rule.Action.ToLowerInvariant() == "on" ? "off" : "on");
                 _logger.LogInformation("Startup: enforcing '{Action}' for non-timed rule {RuleId}.", desiredAction, rule.Id);
                 await _mqttService.PublishSwitchDataAsync(topic, desiredAction);
@@ -263,6 +269,11 @@ public class Worker : BackgroundService
             }
 
             var action = rule.Action.ToLowerInvariant();
+            if (action != "on" && action != "off")
+            {
+                _logger.LogWarning("Rule {RuleId} has invalid action '{Action}', skipping.", rule.Id, rule.Action);
+                continue;
+            }
             var currentStateDict = _mqttService.LastPublishedSwitchStates;
             var currentState = currentStateDict.TryGetValue(targetSwitch.Name, out var state) ? state.ToLowerInvariant() : null;
 
@@ -378,7 +389,7 @@ public class Worker : BackgroundService
 
         try
         {
-            var priceResponse = await client.GetAsync($"{apiBaseUrl}/api/electricity/current-price?area={area}", stoppingToken);
+            var priceResponse = await client.GetAsync($"{apiBaseUrl}/api/electricity/current-price?area={Uri.EscapeDataString(area)}", stoppingToken);
             if (!priceResponse.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Failed to fetch current price for area {Area}. Status: {StatusCode}", area, priceResponse.StatusCode);
