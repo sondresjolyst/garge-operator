@@ -79,17 +79,17 @@ public class WorkerReconcileTests : WorkerTestBase
     }
 
     [Fact]
-    public async Task NonTimedRule_ConditionNotMet_EnforcesInverseAction()
+    public async Task NonTimedRule_ConditionNotMet_NoPublish()
     {
         var rule = MakeRule(targetId: 10, sensorId: 5, condition: ">", threshold: 20, action: "on");
         SetupRules(rule);
         MockMqtt.Setup(m => m.GetSwitch(10)).Returns(MakeSocket());
-        SetupSensor(5, value: 15); // condition not met → desired = "off"
+        SetupSensor(5, value: 15); // condition not met → leave switch alone
         var worker = CreateWorker();
 
         await worker.ReconcileOnStartupAsync(CancellationToken.None);
 
-        MockMqtt.Verify(m => m.PublishSwitchDataAsync("garge/devices/test-socket/set", "off"), Times.Once);
+        MockMqtt.Verify(m => m.PublishSwitchDataAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
