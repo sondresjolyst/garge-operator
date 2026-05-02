@@ -153,7 +153,13 @@ public class Worker : BackgroundService
                     continue;
                 }
 
-                var desiredAction = conditionMet ? rule.Action.ToLowerInvariant() : (rule.Action.ToLowerInvariant() == "on" ? "off" : "on");
+                if (!conditionMet)
+                {
+                    _logger.LogInformation("Startup: rule {RuleId} condition not met, skipping.", rule.Id);
+                    continue;
+                }
+
+                var desiredAction = rule.Action.ToLowerInvariant();
                 _logger.LogInformation("Startup: enforcing '{Action}' for non-timed rule {RuleId}.", desiredAction, rule.Id);
                 await _mqttService.PublishSwitchDataAsync(topic, desiredAction);
                 _lastPublishedActions[rule.TargetId] = desiredAction;
