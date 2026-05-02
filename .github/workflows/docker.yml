@@ -12,14 +12,35 @@ on:
   push:
     branches:
       - development
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test
+        run: dotnet test --no-build --verbosity normal
+
   dev:
+    needs: test
     if: github.ref == 'refs/heads/development'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@6f3c4901194b286f11800f60fc034417e2c8480a # v9.36.0
+    uses: equinor/ops-actions/.github/workflows/docker.yml@39749d0c32762076499120f881e963687374420c # v9.37.1
     secrets:
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
@@ -30,8 +51,9 @@ jobs:
       tag: dev
 
   prod:
+    needs: test
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@6f3c4901194b286f11800f60fc034417e2c8480a # v9.36.0
+    uses: equinor/ops-actions/.github/workflows/docker.yml@39749d0c32762076499120f881e963687374420c # v9.37.1
     secrets:
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
