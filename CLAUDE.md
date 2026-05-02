@@ -1,6 +1,6 @@
 # garge-operator
 
-.NET 8 Worker Service that bridges MQTT device communication with garge-api. Polls automation rules, manages MQTT device connections, and forwards sensor data to the API.
+.NET 10 Worker Service that bridges MQTT device communication with garge-api. Polls automation rules, manages MQTT device connections, and forwards sensor data to the API.
 
 ## Domain Context
 
@@ -14,7 +14,7 @@ Switches are controllable power sockets attached to devices like battery charger
 
 | Concern | Library |
 |---|---|
-| Framework | .NET 8 Worker Service (IHostedService) |
+| Framework | .NET 10 Worker Service (IHostedService) |
 | Language | C# (nullable reference types) |
 | MQTT | MQTTnet v4 (managed client) |
 | HTTP | HttpClientFactory → garge-api |
