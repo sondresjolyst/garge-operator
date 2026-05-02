@@ -21,7 +21,7 @@ var host = builder
     })
     .ConfigureServices((context, services) =>
     {
-        services.AddSingleton<MqttService>();
+        services.AddSingleton<IMqttService, MqttService>();
         services.AddHostedService<Worker>();
         services.AddHttpClient();
     })
@@ -55,7 +55,7 @@ var host = builder
                         }
                     }
 
-                    var mqttService = context.RequestServices.GetRequiredService<MqttService>();
+                    var mqttService = context.RequestServices.GetRequiredService<IMqttService>();
                     var payload = await JsonSerializer.DeserializeAsync<WebhookPayload>(context.Request.Body);
 
                     if (payload == null)

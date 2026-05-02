@@ -1,6 +1,6 @@
 ﻿namespace garge_operator.Dtos.Automation
 {
-    class AutomationRuleDto
+    public class AutomationRuleDto
     {
         public int Id { get; set; }
         public required string TargetType { get; set; }
