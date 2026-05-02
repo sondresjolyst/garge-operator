@@ -9,7 +9,7 @@ using garge_operator.Dtos.Mqtt;
 
 namespace garge_operator.Services
 {
-    public class MqttService
+    public class MqttService : IMqttService
     {
         private readonly IManagedMqttClient _mqttClient;
         private readonly ManagedMqttClientOptions _mqttClientOptions;

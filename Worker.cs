@@ -5,7 +5,7 @@ using garge_operator.Dtos.Automation;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private readonly MqttService _mqttService;
+    private readonly IMqttService _mqttService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
 
@@ -17,7 +17,7 @@ public class Worker : BackgroundService
 
     public Worker(
         ILogger<Worker> logger,
-        MqttService mqttService,
+        IMqttService mqttService,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration)
     {
@@ -68,7 +68,7 @@ public class Worker : BackgroundService
     /// On startup: immediately resolve any expired timers, re-enforce active timers,
     /// and set correct state for non-timed rules — handles the operator-was-down case.
     /// </summary>
-    private async Task ReconcileOnStartupAsync(CancellationToken stoppingToken)
+    internal async Task ReconcileOnStartupAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Running startup reconciliation pass.");
 
@@ -82,7 +82,7 @@ public class Worker : BackgroundService
             if (!rule.IsEnabled)
                 continue;
 
-            var targetSwitch = GetSwitch(rule.TargetId);
+            var targetSwitch = _mqttService.GetSwitch(rule.TargetId);
             if (targetSwitch == null) continue;
 
             if (!new[] { "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
@@ -163,7 +163,7 @@ public class Worker : BackgroundService
         _logger.LogInformation("Startup reconciliation complete.");
     }
 
-    private async Task PollAutomationsAsync(CancellationToken stoppingToken)
+    internal async Task PollAutomationsAsync(CancellationToken stoppingToken)
     {
         var (client, rules) = await FetchRulesAsync(stoppingToken);
         if (client == null || rules == null) return;
@@ -182,7 +182,7 @@ public class Worker : BackgroundService
                 continue;
             }
 
-            var targetSwitch = GetSwitch(rule.TargetId);
+            var targetSwitch = _mqttService.GetSwitch(rule.TargetId);
             if (targetSwitch == null)
             {
                 _logger.LogWarning("Switch with ID {TargetId} not found in local list.", rule.TargetId);
@@ -317,15 +317,6 @@ public class Worker : BackgroundService
         return (client, rules);
     }
 
-    private Switch? GetSwitch(int targetId)
-    {
-        var switches = _mqttService
-            .GetType()
-            .GetField("_switches", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-            .GetValue(_mqttService) as List<Switch>;
-        return switches?.FirstOrDefault(s => s.Id == targetId);
-    }
-
     private async Task<double?> GetSensorValueAsync(HttpClient client, string apiBaseUrl, int sensorId, CancellationToken stoppingToken)
     {
         var sensorResponse = await client.GetAsync($"{apiBaseUrl}/api/sensors/{sensorId}/latest-data", stoppingToken);
@@ -349,7 +340,7 @@ public class Worker : BackgroundService
     private static bool EvaluateSensorCondition(double value, string condition, double threshold)
         => EvaluateCondition(value, condition, threshold);
 
-    private static bool EvaluateCondition(double value, string condition, double threshold) => condition switch
+    internal static bool EvaluateCondition(double value, string condition, double threshold) => condition switch
     {
         "<"  => value < threshold,
         ">"  => value > threshold,
