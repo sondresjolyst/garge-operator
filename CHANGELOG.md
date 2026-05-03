@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/sondresjolyst/garge-operator/compare/v1.5.1...v1.5.2) (2026-05-03)
+
+
+### Bug Fixes
+
+* disable config reloadOnChange to prevent inotify exhaustion in k8s ([#101](https://github.com/sondresjolyst/garge-operator/issues/101)) ([598ed88](https://github.com/sondresjolyst/garge-operator/commit/598ed880976db7f10b2482078a130a591770f52d))
+
 ## [1.5.1](https://github.com/sondresjolyst/garge-operator/compare/v1.5.0...v1.5.1) (2026-05-02)
 
 
