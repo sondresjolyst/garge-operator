@@ -40,7 +40,7 @@ jobs:
   dev:
     needs: test
     if: github.ref == 'refs/heads/development'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@39749d0c32762076499120f881e963687374420c # v9.37.1
+    uses: equinor/ops-actions/.github/workflows/docker.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
     secrets:
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
@@ -53,7 +53,7 @@ jobs:
   prod:
     needs: test
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@39749d0c32762076499120f881e963687374420c # v9.37.1
+    uses: equinor/ops-actions/.github/workflows/docker.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
     secrets:
         DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
