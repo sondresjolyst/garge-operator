@@ -8,7 +8,11 @@ using System.Text.Json;
 var builder = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((context, config) =>
     {
-        config.AddUserSecrets<Program>();
+        config.Sources.Clear();
+        config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: false);
+        config.AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true, reloadOnChange: false);
+        config.AddEnvironmentVariables();
+        config.AddUserSecrets<Program>(optional: true);
     });
 
 var host = builder
