@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.5.1](https://github.com/sondresjolyst/garge-operator/compare/v1.5.0...v1.5.1) (2026-05-02)
+
+
+### Bug Fixes
+
+* skip non-timed rules in startup reconciliation when condition not met ([#89](https://github.com/sondresjolyst/garge-operator/issues/89)) ([5a93344](https://github.com/sondresjolyst/garge-operator/commit/5a93344fd111a87187be80ccf03f73d6602f6b1e))
+
+## [1.5.0](https://github.com/sondresjolyst/garge-operator/compare/v1.4.4...v1.5.0) (2026-05-02)
+
+
+### Features
+
+* automated test suite ([#86](https://github.com/sondresjolyst/garge-operator/issues/86)) ([ed51d88](https://github.com/sondresjolyst/garge-operator/commit/ed51d88cd124cb7c66d775b2955a0a33ce925874))
+
+
+### Bug Fixes
+
+* address security advisory GHSA-q83g-3j26-qh5x ([#85](https://github.com/sondresjolyst/garge-operator/issues/85)) ([da2c8b8](https://github.com/sondresjolyst/garge-operator/commit/da2c8b805f409a774fec5ebe61f3a23f6b4a8041))
+
+## [1.4.4](https://github.com/sondresjolyst/garge-operator/compare/v1.4.3...v1.4.4) (2026-04-30)
+
+
+### Bug Fixes
+
+* add JsonPropertyName attribute to SensorStatePayload.Value ([#81](https://github.com/sondresjolyst/garge-operator/issues/81)) ([2100f4c](https://github.com/sondresjolyst/garge-operator/commit/2100f4cd323bb8777efae59cad8d936493e50a74))
+* add JsonPropertyName attribute to SensorStatePayload.Value ([#81](https://github.com/sondresjolyst/garge-operator/issues/81)) ([b17319c](https://github.com/sondresjolyst/garge-operator/commit/b17319cc3767922aaf724fd72c0fbbaf64b8f1db))
+
 ## [1.4.3](https://github.com/sondresjolyst/garge-operator/compare/v1.4.2...v1.4.3) (2026-04-29)
 
 
