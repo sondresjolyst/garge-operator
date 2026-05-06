@@ -27,11 +27,23 @@ namespace garge_operator.Services
         private readonly Dictionary<string, string> _lastPublishedSwitchStates = new();
         private readonly HashSet<string> _subscribedTopics = new();
 
-        // Tracks when we last sent a command for each switch, used to rate-limit retries
-        // while waiting for the device to confirm via /state. The automation loop runs every
-        // minute and would re-send commands continuously without this guard.
+        // Tracks the last command sent per switch so the /state handler can distinguish a
+        // genuine post-switch confirmation from a WiZ pre-switch echo (the device replies with
+        // its current/pre-toggle state before the relay actually moves). Within the grace
+        // window, contradicting /state messages are ignored as echoes.
         private readonly Dictionary<string, (string Action, DateTime SentAt)> _lastCommandedAt = new();
-        private static readonly TimeSpan CommandRetryInterval = TimeSpan.FromMinutes(5);
+        internal static readonly TimeSpan CommandEchoGrace = TimeSpan.FromSeconds(30);
+
+        internal static bool IsPreSwitchEcho(
+            string incomingState,
+            (string Action, DateTime SentAt)? lastCommand,
+            DateTime now,
+            TimeSpan graceWindow)
+        {
+            if (lastCommand is not { } cmd) return false;
+            if (string.Equals(incomingState, cmd.Action, StringComparison.Ordinal)) return false;
+            return (now - cmd.SentAt) < graceWindow;
+        }
 
         // JWT token cache
         private string? _cachedToken;
@@ -296,36 +308,31 @@ namespace garge_operator.Services
 
                         if (isSwitchEntity)
                         {
-                            // Ignore state messages that contradict a command sent within the last 30 seconds.
-                            // WiZ devices echo their current (pre-switch) state immediately upon receiving a
-                            // command — before the relay physically changes. Without this guard that echo
-                            // overwrites the optimistic state set in PublishSwitchDataAsync, so the DB records
-                            // the wrong state until the device's next periodic publish (which may never come).
-                            const int CommandEchoGraceSeconds = 30;
+                            var normalizedState = payload.ToUpperInvariant();
                             bool isPreSwitchEcho;
                             lock (_stateLock)
                             {
-                                isPreSwitchEcho =
-                                    _lastCommandedAt.TryGetValue(entity, out var lastCmd) &&
-                                    !string.Equals(payload, lastCmd.Action, StringComparison.OrdinalIgnoreCase) &&
-                                    (DateTime.UtcNow - lastCmd.SentAt).TotalSeconds < CommandEchoGraceSeconds;
+                                (string, DateTime)? lastCmd = _lastCommandedAt.TryGetValue(entity, out var lc)
+                                    ? (lc.Action, lc.SentAt)
+                                    : null;
+                                isPreSwitchEcho = IsPreSwitchEcho(normalizedState, lastCmd, DateTime.UtcNow, CommandEchoGrace);
                             }
 
                             if (isPreSwitchEcho)
                             {
                                 _logger.LogInformation(
                                     "Ignoring pre-switch echo state '{State}' for {Entity} — device echoed its current state before physically switching.",
-                                    payload.ToUpperInvariant(), entity);
+                                    normalizedState, entity);
                                 break;
                             }
 
-                            await SendSwitchDataToApi(entity, "state", payload);
+                            await SendSwitchDataToApi(entity, "state", normalizedState);
                             lock (_stateLock)
                             {
-                                _lastPublishedSwitchStates[entity] = payload.ToUpperInvariant();
+                                _lastPublishedSwitchStates[entity] = normalizedState;
                                 _lastCommandedAt.Remove(entity);
                             }
-                            _logger.LogInformation("Updated local switch state for {Entity} to {State}.", entity, payload.ToUpperInvariant());
+                            _logger.LogInformation("Updated local switch state for {Entity} to {State}.", entity, normalizedState);
                         }
                         else if (isSensorEntity)
                         {
@@ -886,23 +893,24 @@ namespace garge_operator.Services
         {
             try
             {
+                var normalizedPayload = payload.ToUpperInvariant();
                 string switchNameForPublish;
                 lock (_stateLock)
                 {
                     switchNameForPublish = topic.Split('/')[2];
                     if (_lastPublishedSwitchStates.TryGetValue(switchNameForPublish, out var currentState) &&
-                        string.Equals(currentState, payload, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(currentState, normalizedPayload, StringComparison.Ordinal))
                     {
-                        var sanitizedPayload = payload.Replace("\r", "").Replace("\n", "");
+                        var sanitizedPayload = normalizedPayload.Replace("\r", "").Replace("\n", "");
                         _logger.LogInformation("Skipping publish for switch {SwitchName} as the state {State} is unchanged.", switchNameForPublish, sanitizedPayload);
                         return;
                     }
 
-                    _lastPublishedSwitchStates[switchNameForPublish] = payload;
-                    _lastCommandedAt[switchNameForPublish] = (payload, DateTime.UtcNow);
+                    _lastPublishedSwitchStates[switchNameForPublish] = normalizedPayload;
+                    _lastCommandedAt[switchNameForPublish] = (normalizedPayload, DateTime.UtcNow);
                 }
 
-                var messagePayload = payload.ToUpperInvariant();
+                var messagePayload = normalizedPayload;
 
                 var message = new MqttApplicationMessageBuilder()
                     .WithTopic(topic)
