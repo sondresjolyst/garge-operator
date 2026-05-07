@@ -27,6 +27,24 @@ namespace garge_operator.Services
         private readonly Dictionary<string, string> _lastPublishedSwitchStates = new();
         private readonly HashSet<string> _subscribedTopics = new();
 
+        // Tracks the last command sent per switch so the /state handler can distinguish a
+        // genuine post-switch confirmation from a WiZ pre-switch echo (the device replies with
+        // its current/pre-toggle state before the relay actually moves). Within the grace
+        // window, contradicting /state messages are ignored as echoes.
+        private readonly Dictionary<string, (string Action, DateTime SentAt)> _lastCommandedAt = new();
+        internal static readonly TimeSpan CommandEchoGrace = TimeSpan.FromSeconds(30);
+
+        internal static bool IsPreSwitchEcho(
+            string incomingState,
+            (string Action, DateTime SentAt)? lastCommand,
+            DateTime now,
+            TimeSpan graceWindow)
+        {
+            if (lastCommand is not { } cmd) return false;
+            if (string.Equals(incomingState, cmd.Action, StringComparison.Ordinal)) return false;
+            return (now - cmd.SentAt) < graceWindow;
+        }
+
         // JWT token cache
         private string? _cachedToken;
         private DateTime _tokenExpiry = DateTime.MinValue;
@@ -290,12 +308,31 @@ namespace garge_operator.Services
 
                         if (isSwitchEntity)
                         {
-                            await SendSwitchDataToApi(entity, "state", payload);
+                            var normalizedState = payload.ToUpperInvariant();
+                            bool isPreSwitchEcho;
                             lock (_stateLock)
                             {
-                                _lastPublishedSwitchStates[entity] = payload.ToUpperInvariant();
+                                (string, DateTime)? lastCmd = _lastCommandedAt.TryGetValue(entity, out var lc)
+                                    ? (lc.Action, lc.SentAt)
+                                    : null;
+                                isPreSwitchEcho = IsPreSwitchEcho(normalizedState, lastCmd, DateTime.UtcNow, CommandEchoGrace);
                             }
-                            _logger.LogInformation("Updated local switch state for {Entity} to {State}.", entity, payload.ToUpperInvariant());
+
+                            if (isPreSwitchEcho)
+                            {
+                                _logger.LogInformation(
+                                    "Ignoring pre-switch echo state '{State}' for {Entity} — device echoed its current state before physically switching.",
+                                    normalizedState, entity);
+                                break;
+                            }
+
+                            await SendSwitchDataToApi(entity, "state", normalizedState);
+                            lock (_stateLock)
+                            {
+                                _lastPublishedSwitchStates[entity] = normalizedState;
+                                _lastCommandedAt.Remove(entity);
+                            }
+                            _logger.LogInformation("Updated local switch state for {Entity} to {State}.", entity, normalizedState);
                         }
                         else if (isSensorEntity)
                         {
@@ -856,20 +893,24 @@ namespace garge_operator.Services
         {
             try
             {
+                var normalizedPayload = payload.ToUpperInvariant();
+                string switchNameForPublish;
                 lock (_stateLock)
                 {
-                    var switchName = topic.Split('/')[2];
-                    if (_lastPublishedSwitchStates.TryGetValue(switchName, out var currentState) && currentState == payload)
+                    switchNameForPublish = topic.Split('/')[2];
+                    if (_lastPublishedSwitchStates.TryGetValue(switchNameForPublish, out var currentState) &&
+                        string.Equals(currentState, normalizedPayload, StringComparison.Ordinal))
                     {
-                        var sanitizedPayload = payload.Replace("\r", "").Replace("\n", "");
-                        _logger.LogInformation("Skipping publish for switch {SwitchName} as the state {State} is unchanged.", switchName, sanitizedPayload);
+                        var sanitizedPayload = normalizedPayload.Replace("\r", "").Replace("\n", "");
+                        _logger.LogInformation("Skipping publish for switch {SwitchName} as the state {State} is unchanged.", switchNameForPublish, sanitizedPayload);
                         return;
                     }
 
-                    _lastPublishedSwitchStates[switchName] = payload;
+                    _lastPublishedSwitchStates[switchNameForPublish] = normalizedPayload;
+                    _lastCommandedAt[switchNameForPublish] = (normalizedPayload, DateTime.UtcNow);
                 }
 
-                var messagePayload = payload.ToUpperInvariant();
+                var messagePayload = normalizedPayload;
 
                 var message = new MqttApplicationMessageBuilder()
                     .WithTopic(topic)
