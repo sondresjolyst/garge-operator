@@ -1,18 +1,21 @@
 name: 🔨 Build and Push Docker Image
 
 on:
+  pull_request:
+  push:
+    branches: [development]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag for the Docker image'
+        description: "Tag for the Docker image"
+        type: string
         required: true
-  release:
-    types:
-      - published
-  push:
-    branches:
-      - development
-  pull_request:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag for the Docker image"
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -26,7 +29,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: "10.0.x"
 
       - name: Restore
         run: dotnet restore
@@ -42,7 +45,7 @@ jobs:
     if: github.ref == 'refs/heads/development'
     uses: equinor/ops-actions/.github/workflows/docker.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
     secrets:
-        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
       environment: dev
       registry: registry.hub.docker.com
@@ -52,13 +55,13 @@ jobs:
 
   prod:
     needs: test
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
     uses: equinor/ops-actions/.github/workflows/docker.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
     secrets:
-        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
       environment: prod
       registry: registry.hub.docker.com
       username: sondresjo
       repository: sondresjo/garge-operator
-      tag: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+      tag: ${{ github.event.release.tag_name || inputs.tag }}
