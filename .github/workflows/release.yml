@@ -25,5 +25,8 @@ jobs:
     permissions:
       contents: read # Required to checkout code
     uses: ./.github/workflows/docker.yml
+    secrets:
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      GARGE_PAT: ${{ secrets.GARGE_PAT }}
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
