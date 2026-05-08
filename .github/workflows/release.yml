@@ -1,18 +1,29 @@
 name: 🚀 Create release
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
-permissions:
-  contents: write # Required to update changelog file
-  pull-requests: write # Required to create release PRs
-  issues: write
+permissions: {}
 
 jobs:
   release-please:
     name: Release Please
     uses: equinor/ops-actions/.github/workflows/release-please.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
+    permissions:
+      contents: write # Required to update changelog file
+      pull-requests: write # Required to create release PRs
+      issues: write
     with:
       release_type: simple
+
+  deploy-prod:
+    name: Deploy Prod
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    permissions:
+      contents: read # Required to checkout code
+    uses: ./.github/workflows/docker.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
