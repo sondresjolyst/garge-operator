@@ -16,6 +16,11 @@ on:
         description: "Tag for the Docker image"
         type: string
         required: true
+    secrets:
+      DOCKER_PASSWORD:
+        required: true
+      GARGE_PAT:
+        required: false
 
 permissions:
   contents: read
