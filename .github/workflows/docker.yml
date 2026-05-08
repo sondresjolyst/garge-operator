@@ -55,7 +55,7 @@ jobs:
 
   prod:
     needs: test
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+    if: inputs.tag != ''
     uses: equinor/ops-actions/.github/workflows/docker.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
