@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/sondresjolyst/garge-operator/compare/v1.5.2...v1.5.3) (2026-05-08)
+
+
+### Bug Fixes
+
+* pre-switch echo handling ([#105](https://github.com/sondresjolyst/garge-operator/issues/105)) ([c902e86](https://github.com/sondresjolyst/garge-operator/commit/c902e864560360e4e84b67445f5628aca7e7a09e))
+
 ## [1.5.2](https://github.com/sondresjolyst/garge-operator/compare/v1.5.1...v1.5.2) (2026-05-03)
 
 
