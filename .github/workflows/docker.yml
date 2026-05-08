@@ -64,4 +64,14 @@ jobs:
       registry: registry.hub.docker.com
       username: sondresjo
       repository: sondresjo/garge-operator
-      tag: ${{ github.event.release.tag_name || inputs.tag }}
+      tag: ${{ inputs.tag }}
+
+  update-chart:
+    needs: prod
+    if: inputs.tag != ''
+    uses: sondresjolyst/garge/.github/workflows/update-chart.yml@main
+    secrets:
+      GARGE_PAT: ${{ secrets.GARGE_PAT }}
+    with:
+      chart_name: garge-operator
+      tag: ${{ inputs.tag }}
