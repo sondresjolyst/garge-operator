@@ -48,7 +48,7 @@ jobs:
   dev:
     needs: test
     if: github.ref == 'refs/heads/development'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
+    uses: equinor/ops-actions/.github/workflows/docker.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
@@ -61,7 +61,7 @@ jobs:
   prod:
     needs: test
     if: inputs.tag != ''
-    uses: equinor/ops-actions/.github/workflows/docker.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
+    uses: equinor/ops-actions/.github/workflows/docker.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
