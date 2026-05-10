@@ -3,14 +3,25 @@ using Microsoft.Extensions.Hosting;
 
 namespace garge_operator.Services
 {
+    /// <summary>
+    /// Maintains a SignalR connection to garge-api's DeviceHub.
+    /// Supervision strategy:
+    ///   - WithAutomaticReconnect for short hiccups (~30s, 4 attempts).
+    ///   - On Closed (auto-reconnect exhausted) we schedule a fresh
+    ///     StartAsync with a longer back-off so a multi-minute API outage
+    ///     still recovers without restarting the operator process.
+    /// </summary>
     public class OperatorHubClient : BackgroundService
     {
         private const string SwitchEventName = "switch";
+        private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan ClosedRestartDelay = TimeSpan.FromSeconds(60);
 
         private readonly IConfiguration _configuration;
         private readonly IMqttService _mqttService;
         private readonly ILogger<OperatorHubClient> _logger;
         private HubConnection? _connection;
+        private CancellationToken _stoppingToken;
 
         public OperatorHubClient(
             IConfiguration configuration,
@@ -24,6 +35,8 @@ namespace garge_operator.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            _stoppingToken = stoppingToken;
+
             var apiBase = _configuration["Api:BaseUrl"]
                           ?? throw new InvalidOperationException("Api:BaseUrl not configured");
             var hubUrl = $"{apiBase.TrimEnd('/')}/hubs/devices";
@@ -36,11 +49,11 @@ namespace garge_operator.Services
                 .WithAutomaticReconnect()
                 .Build();
 
-            _connection.On<WebhookPayload>(SwitchEventName, async payload =>
+            _connection.On<SwitchEvent>(SwitchEventName, async evt =>
             {
                 try
                 {
-                    await _mqttService.HandleWebhookDataAsync(payload);
+                    await _mqttService.HandleSwitchEventAsync(evt);
                 }
                 catch (Exception ex)
                 {
@@ -58,27 +71,21 @@ namespace garge_operator.Services
                 _logger.LogInformation("OperatorHubClient: reconnected ({ConnectionId})", connectionId);
                 return Task.CompletedTask;
             };
-            _connection.Closed += error =>
+            _connection.Closed += async error =>
             {
-                _logger.LogWarning(error, "OperatorHubClient: connection closed");
-                return Task.CompletedTask;
-            };
-
-            // Retry start until success or shutdown.
-            while (!stoppingToken.IsCancellationRequested)
-            {
+                if (_stoppingToken.IsCancellationRequested) return;
+                _logger.LogWarning(error,
+                    "OperatorHubClient: connection closed past auto-reconnect, restarting in {Delay}",
+                    ClosedRestartDelay);
                 try
                 {
-                    await _connection.StartAsync(stoppingToken);
-                    _logger.LogInformation("OperatorHubClient: connected to {HubUrl}", hubUrl);
-                    break;
+                    await Task.Delay(ClosedRestartDelay, _stoppingToken);
+                    await StartWithRetriesAsync(hubUrl);
                 }
-                catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-                {
-                    _logger.LogWarning(ex, "OperatorHubClient: initial connect failed, retrying in 5s");
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-                }
-            }
+                catch (OperationCanceledException) { }
+            };
+
+            await StartWithRetriesAsync(hubUrl);
 
             try
             {
@@ -86,6 +93,26 @@ namespace garge_operator.Services
             }
             catch (OperationCanceledException)
             {
+            }
+        }
+
+        private async Task StartWithRetriesAsync(string hubUrl)
+        {
+            while (!_stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (_connection!.State == HubConnectionState.Connected) return;
+                    await _connection!.StartAsync(_stoppingToken);
+                    _logger.LogInformation("OperatorHubClient: connected to {HubUrl}", hubUrl);
+                    return;
+                }
+                catch (Exception ex) when (!_stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex, "OperatorHubClient: connect failed, retrying in {Delay}",
+                        InitialRetryDelay);
+                    await Task.Delay(InitialRetryDelay, _stoppingToken);
+                }
             }
         }
 

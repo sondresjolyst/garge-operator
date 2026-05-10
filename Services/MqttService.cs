@@ -925,26 +925,26 @@ namespace garge_operator.Services
             }
         }
 
-        public async Task HandleWebhookDataAsync(WebhookPayload payload)
+        public async Task HandleSwitchEventAsync(SwitchEvent evt)
         {
             try
             {
-                _logger.LogDebug("Received webhook data for switch: {SwitchName}", payload.Switch?.Name);
+                _logger.LogDebug("Received switch event for switch: {SwitchName}", evt.Switch?.Name);
 
-                if (payload.Switch == null)
+                if (evt.Switch == null)
                 {
-                    _logger.LogWarning("Webhook payload does not contain a valid switch.");
+                    _logger.LogWarning("Switch event payload does not contain a valid switch.");
                     return;
                 }
 
-                var switchName = payload.Switch.Name;
+                var switchName = evt.Switch.Name;
                 if (!IsValidDeviceId(switchName))
                 {
-                    _logger.LogWarning("Webhook payload contains invalid switch name: {Name}", switchName);
+                    _logger.LogWarning("Switch event payload contains invalid switch name: {Name}", switchName);
                     return;
                 }
 
-                var state = payload.Value.ToUpperInvariant();
+                var state = evt.Value.ToUpperInvariant();
 
                 bool knownSwitch;
                 lock (_listsLock)
@@ -968,7 +968,7 @@ namespace garge_operator.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling webhook data.");
+                _logger.LogError(ex, "Error handling switch event.");
             }
         }
     }
