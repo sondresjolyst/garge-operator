@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   release-please:
     name: Release Please
-    uses: equinor/ops-actions/.github/workflows/release-please.yml@e925ef9959a37d43073b77efa2f73c64253fbd55 # v9.37.2
+    uses: equinor/ops-actions/.github/workflows/release-please.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
     permissions:
       contents: write # Required to update changelog file
       pull-requests: write # Required to create release PRs
