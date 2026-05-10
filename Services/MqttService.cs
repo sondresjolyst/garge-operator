@@ -125,9 +125,6 @@ namespace garge_operator.Services
                 return;
             }
 
-            // Register this service as a subscriber
-            await RegisterAsSubscriberAsync();
-
             // Get all sensors from the API
             _sensors = await GetAllSensorsAsync(token);
 
@@ -928,70 +925,26 @@ namespace garge_operator.Services
             }
         }
 
-        public async Task RegisterAsSubscriberAsync()
+        public async Task HandleSwitchEventAsync(SwitchEvent evt)
         {
             try
             {
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                _logger.LogDebug("Received switch event for switch: {SwitchName}", evt.Switch?.Name);
 
-                // Define the webhook URL for this application
-                var webhookUrl = _configuration["Webhook:Url"];
-                if (string.IsNullOrWhiteSpace(webhookUrl))
+                if (evt.Switch == null)
                 {
-                    _logger.LogError("Webhook URL is not configured.");
+                    _logger.LogWarning("Switch event payload does not contain a valid switch.");
                     return;
                 }
 
-                // Create the payload for the subscription, including webhook secret for garge-api
-                // (garge-api may ignore WebhookSecret if it does not yet support it — backwards-compatible)
-                var payload = new
-                {
-                    WebhookUrl = webhookUrl,
-                    WebhookSecret = _configuration["Webhook:Secret"]
-                };
-
-                // Send the POST request to the API's subscription endpoint
-                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/webhook", content);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation("Successfully registered as a subscriber.");
-                }
-                else
-                {
-                    var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to register as a subscriber. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", response.StatusCode, response.ReasonPhrase, responseContent);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error registering as a subscriber.");
-            }
-        }
-
-        public async Task HandleWebhookDataAsync(WebhookPayload payload)
-        {
-            try
-            {
-                _logger.LogDebug("Received webhook data for switch: {SwitchName}", payload.Switch?.Name);
-
-                if (payload.Switch == null)
-                {
-                    _logger.LogWarning("Webhook payload does not contain a valid switch.");
-                    return;
-                }
-
-                var switchName = payload.Switch.Name;
+                var switchName = evt.Switch.Name;
                 if (!IsValidDeviceId(switchName))
                 {
-                    _logger.LogWarning("Webhook payload contains invalid switch name: {Name}", switchName);
+                    _logger.LogWarning("Switch event payload contains invalid switch name: {Name}", switchName);
                     return;
                 }
 
-                var state = payload.Value.ToUpperInvariant();
+                var state = evt.Value.ToUpperInvariant();
 
                 bool knownSwitch;
                 lock (_listsLock)
@@ -1015,7 +968,7 @@ namespace garge_operator.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling webhook data.");
+                _logger.LogError(ex, "Error handling switch event.");
             }
         }
     }
