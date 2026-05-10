@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/sondresjolyst/garge-operator/compare/v1.5.3...v1.6.0) (2026-05-10)
+
+
+### Features
+
+* **signalr:** receive switch events from garge-api hub ([#113](https://github.com/sondresjolyst/garge-operator/issues/113)) ([50821d9](https://github.com/sondresjolyst/garge-operator/commit/50821d9336329b80d6d479846b5e769829ad3c43))
+
 ## [1.5.3](https://github.com/sondresjolyst/garge-operator/compare/v1.5.2...v1.5.3) (2026-05-08)
 
 
