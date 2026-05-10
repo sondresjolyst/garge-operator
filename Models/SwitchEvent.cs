@@ -1,4 +1,6 @@
-﻿public class WebhookPayload
+// Wire-format DTO for switch state events received from garge-api's
+// SignalR DeviceHub. Matches SwitchEventDto on the API side.
+public class SwitchEvent
 {
     public int Id { get; set; }
     public int SwitchId { get; set; }

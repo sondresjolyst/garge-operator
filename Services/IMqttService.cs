@@ -6,6 +6,6 @@ public interface IMqttService
     Task ConnectAsync();
     Switch? GetSwitch(int targetId);
     Task<string> GetJwtTokenAsync();
-    Task HandleWebhookDataAsync(WebhookPayload payload);
+    Task HandleSwitchEventAsync(SwitchEvent evt);
     Task PublishSwitchDataAsync(string topic, string payload);
 }
