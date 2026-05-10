@@ -125,9 +125,6 @@ namespace garge_operator.Services
                 return;
             }
 
-            // Register this service as a subscriber
-            await RegisterAsSubscriberAsync();
-
             // Get all sensors from the API
             _sensors = await GetAllSensorsAsync(token);
 
@@ -925,50 +922,6 @@ namespace garge_operator.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error publishing Switch data to topic {Topic}.", topic);
-            }
-        }
-
-        public async Task RegisterAsSubscriberAsync()
-        {
-            try
-            {
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-                // Define the webhook URL for this application
-                var webhookUrl = _configuration["Webhook:Url"];
-                if (string.IsNullOrWhiteSpace(webhookUrl))
-                {
-                    _logger.LogError("Webhook URL is not configured.");
-                    return;
-                }
-
-                // Create the payload for the subscription, including webhook secret for garge-api
-                // (garge-api may ignore WebhookSecret if it does not yet support it — backwards-compatible)
-                var payload = new
-                {
-                    WebhookUrl = webhookUrl,
-                    WebhookSecret = _configuration["Webhook:Secret"]
-                };
-
-                // Send the POST request to the API's subscription endpoint
-                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/webhook", content);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation("Successfully registered as a subscriber.");
-                }
-                else
-                {
-                    var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to register as a subscriber. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", response.StatusCode, response.ReasonPhrase, responseContent);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error registering as a subscriber.");
             }
         }
 
