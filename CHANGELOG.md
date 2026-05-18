@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/sondresjolyst/garge-operator/compare/v1.6.0...v1.7.0) (2026-05-18)
+
+
+### Features
+
+* drop firmware battery health MQTT bridging ([#116](https://github.com/sondresjolyst/garge-operator/issues/116)) ([dc17172](https://github.com/sondresjolyst/garge-operator/commit/dc171720b9e581719bd6ac69254ade093ad83a90))
+
 ## [1.6.0](https://github.com/sondresjolyst/garge-operator/compare/v1.5.3...v1.6.0) (2026-05-10)
 
 
