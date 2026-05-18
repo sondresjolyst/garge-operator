@@ -379,6 +379,12 @@ namespace garge_operator.Services
                     return;
                 }
 
+                if (!garge_operator.Constants.SensorTypes.IsAllowed(sensorConfig.DevCla))
+                {
+                    _logger.LogWarning("Rejecting sensor config with unsupported type '{Type}' for {UniqId}", sensorConfig.DevCla, sensorConfig.UniqId);
+                    return;
+                }
+
                 bool sensorExists;
                 lock (_listsLock)
                 {
