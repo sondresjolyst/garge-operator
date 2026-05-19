@@ -1,19 +1,31 @@
-name: 🚀 Create release
+name: 🚀 Release
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions: {}
 
 jobs:
+  deploy-dev:
+    name: Deploy Dev
+    permissions:
+      contents: read
+    uses: ./.github/workflows/docker.yml
+    secrets:
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+    with:
+      tag: dev
+      environment: dev
+      tag_latest: false
+
   release-please:
     name: Release Please
     uses: equinor/ops-actions/.github/workflows/release-please.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
     permissions:
-      contents: write # Required to update changelog file
-      pull-requests: write # Required to create release PRs
+      contents: write
+      pull-requests: write
       issues: write
     with:
       release_type: simple
@@ -23,10 +35,22 @@ jobs:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     permissions:
-      contents: read # Required to checkout code
+      contents: read
     uses: ./.github/workflows/docker.yml
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+      environment: prod
+      tag_latest: true
+
+  update-chart:
+    name: Update Chart
+    needs: [release-please, deploy-prod]
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: sondresjolyst/garge/.github/workflows/update-chart.yml@main
+    secrets:
       GARGE_PAT: ${{ secrets.GARGE_PAT }}
     with:
+      chart_name: garge-operator
       tag: ${{ needs.release-please.outputs.tag_name }}

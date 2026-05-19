@@ -2,31 +2,30 @@ name: 🔨 Build and Push Docker Image
 
 on:
   pull_request:
-  push:
-    branches: [development]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag for the Docker image"
-        type: string
-        required: true
   workflow_call:
     inputs:
       tag:
         description: "Tag for the Docker image"
         type: string
         required: true
+      environment:
+        description: "Deployment environment (dev or prod)"
+        type: string
+        required: true
+      tag_latest:
+        description: "Also tag the image as latest"
+        type: boolean
+        default: false
     secrets:
       DOCKER_PASSWORD:
         required: true
-      GARGE_PAT:
-        required: false
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -45,38 +44,15 @@ jobs:
       - name: Test
         run: dotnet test --no-build --verbosity normal
 
-  dev:
-    needs: test
-    if: github.ref == 'refs/heads/development'
-    uses: equinor/ops-actions/.github/workflows/docker.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
-    secrets:
-      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-    with:
-      environment: dev
-      registry: registry.hub.docker.com
-      username: sondresjo
-      repository: sondresjo/garge-operator
-      tag: dev
-
-  prod:
-    needs: test
+  build-and-push:
     if: inputs.tag != ''
     uses: equinor/ops-actions/.github/workflows/docker.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
-      environment: prod
+      environment: ${{ inputs.environment }}
       registry: registry.hub.docker.com
       username: sondresjo
       repository: sondresjo/garge-operator
       tag: ${{ inputs.tag }}
-
-  update-chart:
-    needs: prod
-    if: inputs.tag != ''
-    uses: sondresjolyst/garge/.github/workflows/update-chart.yml@main
-    secrets:
-      GARGE_PAT: ${{ secrets.GARGE_PAT }}
-    with:
-      chart_name: garge-operator
-      tag: ${{ inputs.tag }}
+      tag_latest: ${{ inputs.tag_latest }}
