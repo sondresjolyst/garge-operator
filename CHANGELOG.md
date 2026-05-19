@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/sondresjolyst/garge-operator/compare/v1.7.0...v1.8.0) (2026-05-19)
+
+
+### Features
+
+* **mqtt:** skip unsupported sensor types in HandleSensorConfig ([#119](https://github.com/sondresjolyst/garge-operator/issues/119)) ([c4cb798](https://github.com/sondresjolyst/garge-operator/commit/c4cb798182b24bdb0b39bdcfef17316b9bc1a905))
+
 ## [1.7.0](https://github.com/sondresjolyst/garge-operator/compare/v1.6.0...v1.7.0) (2026-05-18)
 
 
