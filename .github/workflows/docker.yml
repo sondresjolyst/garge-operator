@@ -20,13 +20,14 @@ on:
       DOCKER_PASSWORD:
         required: true
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   test:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -46,6 +47,8 @@ jobs:
 
   build-and-push:
     if: inputs.tag != ''
+    permissions:
+      contents: read
     uses: equinor/ops-actions/.github/workflows/docker.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
