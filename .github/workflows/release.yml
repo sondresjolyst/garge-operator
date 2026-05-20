@@ -8,18 +8,6 @@ on:
 permissions: {}
 
 jobs:
-  deploy-dev:
-    name: Deploy Dev
-    permissions:
-      contents: read
-    uses: ./.github/workflows/docker.yml
-    secrets:
-      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-    with:
-      tag: dev
-      environment: dev
-      tag_latest: false
-
   release-please:
     name: Release Please
     uses: equinor/ops-actions/.github/workflows/release-please.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
@@ -30,12 +18,26 @@ jobs:
     with:
       release_type: simple
 
+  deploy-dev:
+    name: Deploy Dev
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/docker.yml
+    secrets:
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+    with:
+      tag: dev
+      environment: dev
+      tag_latest: false
+
   deploy-prod:
     name: Deploy Prod
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     permissions:
       contents: read
+      packages: read
     uses: ./.github/workflows/docker.yml
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
@@ -48,6 +50,8 @@ jobs:
     name: Update Chart
     needs: [release-please, deploy-prod]
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    permissions:
+      contents: read
     uses: sondresjolyst/garge/.github/workflows/update-chart.yml@main
     secrets:
       GARGE_PAT: ${{ secrets.GARGE_PAT }}
