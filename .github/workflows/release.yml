@@ -1,6 +1,7 @@
 name: 🚀 Release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -10,6 +11,7 @@ permissions: {}
 jobs:
   release-please:
     name: Release Please
+    if: ${{ github.event_name == 'push' }}
     uses: equinor/ops-actions/.github/workflows/release-please.yml@f52d0091e07205220002c7abd2c82cab44143d26 # v9.37.3
     permissions:
       contents: write
