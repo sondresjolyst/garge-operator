@@ -84,7 +84,7 @@ public class WorkerReconcileTests : WorkerTestBase
         var rule = MakeRule(targetId: 10, sensorId: 5, condition: ">", threshold: 20, action: "on");
         SetupRules(rule);
         MockMqtt.Setup(m => m.GetSwitch(10)).Returns(MakeSocket());
-        SetupSensor(5, value: 15); // condition not met → leave switch alone
+        SetupSensor(5, value: 15); // Condition not met: the switch is left unchanged.
         var worker = CreateWorker();
 
         await worker.ReconcileOnStartupAsync(CancellationToken.None);

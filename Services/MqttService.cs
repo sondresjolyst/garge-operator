@@ -27,9 +27,9 @@ namespace garge_operator.Services
         private readonly HashSet<string> _subscribedTopics = new();
 
         // Tracks the last command sent per switch so the /state handler can distinguish a
-        // genuine post-switch confirmation from a WiZ pre-switch echo (the device replies with
-        // its current/pre-toggle state before the relay actually moves). Within the grace
-        // window, contradicting /state messages are ignored as echoes.
+        // genuine post-switch confirmation from a WiZ pre-switch echo. A WiZ device reports its
+        // current pre-toggle state before the relay physically moves. Within the grace window,
+        // contradicting /state messages are treated as echoes and ignored.
         private readonly Dictionary<string, (string Action, DateTime SentAt)> _lastCommandedAt = new();
         internal static readonly TimeSpan CommandEchoGrace = TimeSpan.FromSeconds(30);
 
@@ -59,7 +59,7 @@ namespace garge_operator.Services
             _sensors = new List<Sensor>();
             _switches = new List<Switch>();
 
-            // Safely read broker & port
+            // Read and validate the broker and port.
             var broker = configuration["Mqtt:Broker"];
             if (string.IsNullOrWhiteSpace(broker))
                 throw new ArgumentException("Mqtt:Broker not set in configuration.");
@@ -68,13 +68,13 @@ namespace garge_operator.Services
             if (!int.TryParse(portString, out var port))
                 throw new ArgumentException("Mqtt:Port is invalid or not set in configuration.");
 
-            // Safely read API BaseUrl
+            // Read and validate the API base URL.
             var baseUrl = configuration["Api:BaseUrl"];
             if (string.IsNullOrWhiteSpace(baseUrl))
                 throw new ArgumentException("Api:BaseUrl not set in configuration.");
             _apiBaseUrl = baseUrl;
 
-            // Safely read username & password
+            // Read and validate the username and password.
             var username = configuration["Mqtt:Username"];
             var password = configuration["Mqtt:Password"];
             if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))

@@ -103,11 +103,11 @@ public class WorkerPollTests : WorkerTestBase
         SetupPrice("NO1", price: 0.3);
         var worker = CreateWorker();
 
-        // First call — records "on" internally
+        // First call records the "on" state internally.
         await worker.PollAutomationsAsync(CancellationToken.None);
         MockMqtt.Invocations.Clear();
 
-        // Second call — no price change, should not re-publish
+        // Second call: with no price change, the state must not be republished.
         await worker.PollAutomationsAsync(CancellationToken.None);
 
         MockMqtt.Verify(m => m.PublishSwitchDataAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
@@ -232,8 +232,8 @@ public class WorkerPollTests : WorkerTestBase
         SetupRules(rule);
         MockMqtt.Setup(m => m.GetSwitch(10)).Returns(MakeSocket());
         MockMqtt.Setup(m => m.LastPublishedSwitchStates).Returns(new Dictionary<string, string>());
-        SetupSensor(5, value: 15); // sensor condition NOT met
-        SetupPrice("NO1", price: 0.3); // price condition met
+        SetupSensor(5, value: 15); // Sensor condition is not met.
+        SetupPrice("NO1", price: 0.3); // Price condition is met.
         HttpHandler.OnPatch($"{ApiBase}/api/automation/1/triggered");
         var worker = CreateWorker();
 

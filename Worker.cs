@@ -9,10 +9,10 @@ public class Worker : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
 
-    // Cache last published action per switchId
+    // Caches the last published action per switch, keyed by switch ID.
     private readonly Dictionary<int, string> _lastPublishedActions = new();
 
-    // Cache current electricity price per area (keyed by area, valid for current delivery hour)
+    // Caches the electricity price per area. Each entry is valid until the end of its delivery hour.
     private readonly Dictionary<string, (double Value, DateTime ValidUntil)> _priceCache = new();
 
     public Worker(
@@ -31,7 +31,7 @@ public class Worker : BackgroundService
     {
         await _mqttService.ConnectAsync();
 
-        // Reconcile rule state on startup before entering the poll loop
+        // Reconcile rule state before entering the poll loop.
         try
         {
             await ReconcileOnStartupAsync(stoppingToken);
@@ -65,8 +65,8 @@ public class Worker : BackgroundService
     }
 
     /// <summary>
-    /// On startup: immediately resolve any expired timers, re-enforce active timers,
-    /// and set correct state for non-timed rules — handles the operator-was-down case.
+    /// Reconciles rule state at startup: resolves expired timers, re-enforces active timers,
+    /// and sets the correct state for non-timed rules. Recovers state after operator downtime.
     /// </summary>
     internal async Task ReconcileOnStartupAsync(CancellationToken stoppingToken)
     {
@@ -100,14 +100,14 @@ public class Worker : BackgroundService
                     var elapsed = DateTime.UtcNow - rule.TimerActivatedAt.Value.ToUniversalTime();
                     if (elapsed >= TimeSpan.FromHours(rule.TimerDurationHours.Value))
                     {
-                        // Timer expired while operator was down — turn OFF and clear
+                        // Timer expired during operator downtime: turn the switch off and clear the timer.
                         _logger.LogInformation("Startup: timer expired for rule {RuleId}, turning OFF and clearing.", rule.Id);
                         await _mqttService.PublishSwitchDataAsync(topic, "off");
                         await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{rule.Id}/timer-clear", stoppingToken);
                     }
                     else
                     {
-                        // Timer still active — re-enforce state, gated by price condition if set
+                        // Timer still active: re-enforce state, gated by the price condition when set.
                         bool priceOk = true;
                         if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
                             rule.ElectricityPriceThreshold.HasValue &&
@@ -124,11 +124,11 @@ public class Worker : BackgroundService
                         _lastPublishedActions[rule.TargetId] = startupDesired;
                     }
                 }
-                // If TimerActivatedAt is null the rule is idle — no action needed on startup
+                // A null TimerActivatedAt means the rule is idle and requires no startup action.
             }
             else
             {
-                // Non-timed rule: evaluate condition and enforce correct state
+                // Non-timed rule: evaluate the condition and enforce the correct state.
                 var sensorValue = await GetSensorValueAsync(client, apiBaseUrl, rule.SensorId, stoppingToken);
                 if (sensorValue == null) continue;
 
@@ -218,7 +218,7 @@ public class Worker : BackgroundService
                     }
                     else
                     {
-                        // Timer still running — gate socket by price condition (sensor is trigger-only)
+                        // Timer still running: gate the socket on the price condition. The sensor only acts as a trigger.
                         bool priceOk = true;
                         if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
                             rule.ElectricityPriceThreshold.HasValue &&
@@ -241,7 +241,7 @@ public class Worker : BackgroundService
                     continue;
                 }
 
-                // Timer is idle — check trigger condition
+                // Timer idle: check the trigger condition.
                 var sensorValue = await GetSensorValueAsync(client, apiBaseUrl, rule.SensorId, stoppingToken);
                 if (sensorValue == null) continue;
 
