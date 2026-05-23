@@ -6,9 +6,9 @@ namespace garge_operator.Services
     /// <summary>
     /// Maintains a SignalR connection to garge-api's DeviceHub.
     /// Supervision strategy:
-    ///   - WithAutomaticReconnect for short hiccups (~30s, 4 attempts).
-    ///   - On Closed (auto-reconnect exhausted) we schedule a fresh
-    ///     StartAsync with a longer back-off so a multi-minute API outage
+    ///   - Automatic reconnect handles short interruptions (about 30 seconds, 4 attempts).
+    ///   - When the connection closes after automatic reconnect is exhausted, a fresh
+    ///     StartAsync is scheduled with a longer back-off so a multi-minute API outage
     ///     still recovers without restarting the operator process.
     /// </summary>
     public class OperatorHubClient : BackgroundService
