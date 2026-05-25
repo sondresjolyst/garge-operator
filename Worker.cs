@@ -1,9 +1,13 @@
 using System.Text.Json;
 using garge_operator.Services;
 using garge_operator.Dtos.Automation;
+using garge_operator.Constants;
 
 public class Worker : BackgroundService
 {
+    // Reused across all deserialization calls to avoid per-call allocation.
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
     private readonly ILogger<Worker> _logger;
     private readonly IMqttService _mqttService;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -41,26 +45,20 @@ public class Worker : BackgroundService
             _logger.LogError(ex, "Error during startup reconciliation.");
         }
 
-        var lastAutomationPoll = DateTimeOffset.MinValue;
+        // Poll automation rules once per minute. The first tick fires one minute after startup,
+        // preserving the prior cadence where reconciliation runs first and the poll loop follows.
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
 
-        while (!stoppingToken.IsCancellationRequested)
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
-
-            if (DateTimeOffset.Now - lastAutomationPoll > TimeSpan.FromMinutes(1))
+            try
             {
-                try
-                {
-                    await PollAutomationsAsync(stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error during automation polling.");
-                }
-                lastAutomationPoll = DateTimeOffset.Now;
+                await PollAutomationsAsync(stoppingToken);
             }
-
-            await Task.Delay(1000, stoppingToken);
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during automation polling.");
+            }
         }
     }
 
@@ -85,13 +83,13 @@ public class Worker : BackgroundService
             var targetSwitch = _mqttService.GetSwitch(rule.TargetId);
             if (targetSwitch == null) continue;
 
-            if (!new[] { "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            if (!new[] { SwitchTypes.Socket }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
                 continue;
             }
 
-            var topic = $"garge/devices/{targetSwitch.Name}/set";
+            var topic = GargeTopics.SetTopic(targetSwitch.Name);
 
             if (rule.TimerDurationHours.HasValue)
             {
@@ -102,7 +100,7 @@ public class Worker : BackgroundService
                     {
                         // Timer expired during operator downtime: turn the switch off and clear the timer.
                         _logger.LogInformation("Startup: timer expired for rule {RuleId}, turning OFF and clearing.", rule.Id);
-                        await _mqttService.PublishSwitchDataAsync(topic, "off");
+                        await _mqttService.PublishSwitchDataAsync(topic, SwitchActions.Off);
                         await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{rule.Id}/timer-clear", stoppingToken);
                     }
                     else
@@ -118,7 +116,7 @@ public class Worker : BackgroundService
                                 priceOk = EvaluateCondition(price.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
                         }
 
-                        var startupDesired = priceOk ? "on" : "off";
+                        var startupDesired = priceOk ? SwitchActions.On : SwitchActions.Off;
                         _logger.LogInformation("Startup: timer active for rule {RuleId}, enforcing '{Action}' (priceOk={PriceOk}).", rule.Id, startupDesired, priceOk);
                         await _mqttService.PublishSwitchDataAsync(topic, startupDesired);
                         _lastPublishedActions[rule.TargetId] = startupDesired;
@@ -147,7 +145,7 @@ public class Worker : BackgroundService
                     }
                 }
 
-                if (rule.Action.ToLowerInvariant() != "on" && rule.Action.ToLowerInvariant() != "off")
+                if (rule.Action.ToLowerInvariant() != SwitchActions.On && rule.Action.ToLowerInvariant() != SwitchActions.Off)
                 {
                     _logger.LogWarning("Rule {RuleId} has invalid action '{Action}', skipping.", rule.Id, rule.Action);
                     continue;
@@ -180,7 +178,11 @@ public class Worker : BackgroundService
 
         foreach (var rule in rules)
         {
-            _logger.LogInformation("Automation Rule: {Rule}", JsonSerializer.Serialize(rule));
+            // Isolate each rule: a failure on one rule (bad data, transient HTTP error, etc.)
+            // must not abort the rest of the polling cycle.
+            try
+            {
+            _logger.LogDebug("Automation Rule: {Rule}", JsonSerializer.Serialize(rule));
 
             if (!rule.IsEnabled)
             {
@@ -195,13 +197,13 @@ public class Worker : BackgroundService
                 continue;
             }
 
-            if (!new[] { "socket" }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
+            if (!new[] { SwitchTypes.Socket }.Contains(targetSwitch.Type, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("Skipping rule {RuleId}: switch type '{Type}' is not actionable.", rule.Id, targetSwitch.Type);
                 continue;
             }
 
-            var topic = $"garge/devices/{targetSwitch.Name}/set";
+            var topic = GargeTopics.SetTopic(targetSwitch.Name);
 
             // ── Timed rule handling ───────────────────────────────────────────
             if (rule.TimerDurationHours.HasValue)
@@ -212,8 +214,8 @@ public class Worker : BackgroundService
                     if (elapsed >= TimeSpan.FromHours(rule.TimerDurationHours.Value))
                     {
                         _logger.LogInformation("Rule {RuleId}: timer elapsed ({Elapsed:hh\\:mm}), turning OFF.", rule.Id, elapsed);
-                        await _mqttService.PublishSwitchDataAsync(topic, "off");
-                        _lastPublishedActions[rule.TargetId] = "off";
+                        await _mqttService.PublishSwitchDataAsync(topic, SwitchActions.Off);
+                        _lastPublishedActions[rule.TargetId] = SwitchActions.Off;
                         await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{rule.Id}/timer-clear", stoppingToken);
                     }
                     else
@@ -229,7 +231,7 @@ public class Worker : BackgroundService
                                 priceOk = EvaluateCondition(price.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
                         }
 
-                        var desired = priceOk ? "on" : "off";
+                        var desired = priceOk ? SwitchActions.On : SwitchActions.Off;
                         var last = _lastPublishedActions.GetValueOrDefault(rule.TargetId);
                         if (last != desired)
                         {
@@ -251,8 +253,8 @@ public class Worker : BackgroundService
                 if (conditionMet)
                 {
                     _logger.LogInformation("Rule {RuleId}: condition met, starting {Duration}h timer, turning ON.", rule.Id, rule.TimerDurationHours.Value);
-                    await _mqttService.PublishSwitchDataAsync(topic, "on");
-                    _lastPublishedActions[rule.TargetId] = "on";
+                    await _mqttService.PublishSwitchDataAsync(topic, SwitchActions.On);
+                    _lastPublishedActions[rule.TargetId] = SwitchActions.On;
                     await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{rule.Id}/timer-start", stoppingToken);
                     await MarkTriggeredAsync(client, apiBaseUrl, rule.Id, stoppingToken);
                 }
@@ -275,7 +277,7 @@ public class Worker : BackgroundService
             }
 
             var action = rule.Action.ToLowerInvariant();
-            if (action != "on" && action != "off")
+            if (action != SwitchActions.On && action != SwitchActions.Off)
             {
                 _logger.LogWarning("Rule {RuleId} has invalid action '{Action}', skipping.", rule.Id, rule.Action);
                 continue;
@@ -293,17 +295,33 @@ public class Worker : BackgroundService
             await _mqttService.PublishSwitchDataAsync(topic, action);
             _lastPublishedActions[rule.TargetId] = action;
             await MarkTriggeredAsync(client, apiBaseUrl, rule.Id, stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing automation rule {RuleId}; continuing with remaining rules.", rule.Id);
+                continue;
+            }
         }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<(HttpClient? Client, List<AutomationRuleDto>? Rules)> FetchRulesAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Creates an <see cref="HttpClient"/> with a fresh Bearer token attached.
+    /// Centralizes the token-fetch + factory + Authorization-header boilerplate.
+    /// </summary>
+    private async Task<HttpClient> CreateAuthorizedClientAsync()
     {
         var client = _httpClientFactory.CreateClient();
-        var apiBaseUrl = _configuration["Api:BaseUrl"];
         var token = await _mqttService.GetJwtTokenAsync();
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    private async Task<(HttpClient? Client, List<AutomationRuleDto>? Rules)> FetchRulesAsync(CancellationToken stoppingToken)
+    {
+        var apiBaseUrl = _configuration["Api:BaseUrl"];
+        var client = await CreateAuthorizedClientAsync();
 
         var response = await client.GetAsync($"{apiBaseUrl}/api/automation", stoppingToken);
         if (!response.IsSuccessStatusCode)
@@ -313,7 +331,7 @@ public class Worker : BackgroundService
         }
 
         var json = await response.Content.ReadAsStringAsync(stoppingToken);
-        var rules = JsonSerializer.Deserialize<List<AutomationRuleDto>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var rules = JsonSerializer.Deserialize<List<AutomationRuleDto>>(json, JsonOptions);
         if (rules == null)
         {
             _logger.LogWarning("No automation rules found.");
@@ -333,7 +351,20 @@ public class Worker : BackgroundService
         }
 
         var sensorJson = await sensorResponse.Content.ReadAsStringAsync(stoppingToken);
-        var valueStr = JsonDocument.Parse(sensorJson).RootElement.GetProperty("value").GetString();
+
+        string? valueStr;
+        try
+        {
+            // Guard against malformed JSON or a missing "value" field in the API response,
+            // mirroring the guarded price parsing in GetCurrentPriceAsync.
+            valueStr = JsonDocument.Parse(sensorJson).RootElement.GetProperty("value").GetString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not parse latest-data JSON for sensor {SensorId}.", sensorId);
+            return null;
+        }
+
         if (!double.TryParse(valueStr, out var sensorValue))
         {
             _logger.LogWarning("Could not parse sensor value '{Value}' for sensor {SensorId}.", valueStr, sensorId);

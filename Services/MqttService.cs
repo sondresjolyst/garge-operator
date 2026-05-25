@@ -6,6 +6,7 @@ using System.Text.Json;
 using garge_operator.Models;
 using MQTTnet.Packets;
 using garge_operator.Dtos.Mqtt;
+using garge_operator.Constants;
 
 namespace garge_operator.Services
 {
@@ -24,7 +25,9 @@ namespace garge_operator.Services
         private readonly object _stateLock = new();
         private readonly object _listsLock = new();
         private readonly Dictionary<string, string> _lastPublishedSwitchStates = new();
-        private readonly HashSet<string> _subscribedTopics = new();
+
+        // Reused across all deserialization calls to avoid per-call allocation.
+        private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
         // Tracks the last command sent per switch so the /state handler can distinguish a
         // genuine post-switch confirmation from a WiZ pre-switch echo. A WiZ device reports its
@@ -116,19 +119,23 @@ namespace garge_operator.Services
 
         public async Task ConnectAsync()
         {
-            // Ensure login is successful before connecting to MQTT broker
+            // Ensure login is successful before connecting to MQTT broker.
             var token = await GetJwtTokenAsync();
             if (string.IsNullOrEmpty(token))
             {
+                // Without a token MQTT can never authenticate. Throw rather than return so the
+                // hosted Worker fails fast: with BackgroundServiceExceptionBehavior.StopHost the
+                // process exits and Kubernetes reschedules the pod, instead of running forever
+                // with a permanently dead MQTT connection.
                 _logger.LogError("Cannot connect to MQTT broker without a valid JWT token.");
-                return;
+                throw new InvalidOperationException("Cannot connect to MQTT broker without a valid JWT token.");
             }
 
             // Get all sensors from the API
-            _sensors = await GetAllSensorsAsync(token);
+            _sensors = await GetAllSensorsAsync();
 
             // Get all switches from the API
-            _switches = await GetAllSwitchesAsync(token);
+            _switches = await GetAllSwitchesAsync();
 
             // Subscribe to the message received event
             _mqttClient.ApplicationMessageReceivedAsync += HandleReceivedMessage;
@@ -136,16 +143,25 @@ namespace garge_operator.Services
             // Log connection status
             _mqttClient.ConnectedAsync += async e =>
             {
-                _logger.LogInformation("Connected to MQTT broker.");
-                await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
+                // This runs as an unobserved async continuation; an unhandled throw here would be
+                // swallowed by the MQTT client. Guard the subscribe so failures are logged.
+                try
                 {
-                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/config").Build(),
-                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/config").Build(),
-                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/state").Build(),
-                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/set").Build(),
-                    new MqttTopicFilterBuilder().WithTopic("garge/devices/+/discovered_devices/+/discovered").Build()
-                });
-                _logger.LogInformation("Subscribed to garge/devices/+/config, garge/devices/+/+/config, state, set topics and device discovery events.");
+                    _logger.LogInformation("Connected to MQTT broker.");
+                    await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
+                    {
+                        new MqttTopicFilterBuilder().WithTopic("garge/devices/+/config").Build(),
+                        new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/config").Build(),
+                        new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/state").Build(),
+                        new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/set").Build(),
+                        new MqttTopicFilterBuilder().WithTopic("garge/devices/+/discovered_devices/+/discovered").Build()
+                    });
+                    _logger.LogInformation("Subscribed to garge/devices/+/config, garge/devices/+/+/config, state, set topics and device discovery events.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to subscribe to MQTT topics after connecting.");
+                }
             };
 
             _mqttClient.DisconnectedAsync += e =>
@@ -179,14 +195,11 @@ namespace garge_operator.Services
                 }
 
                 // Topic structure: garge/devices/{discoveredBy}/discovered_devices/{target}/discovered
-                var topicParts = topic.Split('/');
-                if (topicParts.Length < 6)
+                if (!GargeTopics.TryParseDiscoveryTopic(topic, out var topicDiscoveredBy, out var topicTarget))
                 {
                     _logger.LogWarning("Discovery topic has unexpected structure: {Topic}", topic);
                     return;
                 }
-                var topicDiscoveredBy = topicParts[2];
-                var topicTarget = topicParts[4];
 
                 if (!string.Equals(devicePayload.DiscoveredBy, topicDiscoveredBy, StringComparison.Ordinal) ||
                     !string.Equals(devicePayload.Target, topicTarget, StringComparison.Ordinal))
@@ -232,18 +245,13 @@ namespace garge_operator.Services
                     return;
                 }
 
-                var topicParts = topic.Split('/');
-                if (topicParts.Length < 4 || topicParts[0] != "garge" || topicParts[1] != "devices")
+                if (!GargeTopics.TryParseDeviceTopic(topic, out var deviceId, out var type, out var entity))
                 {
                     _logger.LogWarning("Topic does not match expected structure: {Topic}", topic);
                     return;
                 }
 
-                string deviceId = topicParts[2];
-                string type = topicParts[^1]; // config, state, set
-                string entity = topicParts.Length == 5 ? topicParts[3] : deviceId; // entity if present, else deviceId
-
-                _logger.LogInformation("Raw config payload received on topic {Topic}", topic);
+                _logger.LogDebug("Received message on topic {Topic} (type {Type}).", topic, type);
 
                 switch (type)
                 {
@@ -388,7 +396,7 @@ namespace garge_operator.Services
                 bool sensorExists;
                 lock (_listsLock)
                 {
-                    _logger.LogInformation("Current sensors: {Sensors}", string.Join(", ", _sensors.Select(s => s.Name)));
+                    _logger.LogDebug("Current sensors: {Sensors}", string.Join(", ", _sensors.Select(s => s.Name)));
                     sensorExists = _sensors.Any(s => s.Name == sensorConfig.UniqId);
                 }
 
@@ -448,7 +456,7 @@ namespace garge_operator.Services
                 Switch? createSwitchData = null;
                 lock (_listsLock)
                 {
-                    _logger.LogInformation("Current switches: {Switches}", string.Join(", ", _switches.Select(s => s.Name)));
+                    _logger.LogDebug("Current switches: {Switches}", string.Join(", ", _switches.Select(s => s.Name)));
                     switchExists = _switches.Any(s => s.Name == switchConfig.UniqId);
                     if (!switchExists)
                     {
@@ -488,15 +496,25 @@ namespace garge_operator.Services
             }
         }
 
+        /// <summary>
+        /// Creates an <see cref="HttpClient"/> with a fresh Bearer token attached.
+        /// Centralizes the token-fetch + factory + Authorization-header boilerplate used by every API call.
+        /// </summary>
+        private async Task<HttpClient> CreateAuthorizedClientAsync()
+        {
+            var token = await GetJwtTokenAsync();
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            return client;
+        }
+
         private async Task<bool> GrantDeviceControlAsync(string granteeDeviceId, string targetDeviceId)
         {
             try
             {
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
 
-                var topic = $"garge/devices/{targetDeviceId}/#";
+                var topic = GargeTopics.DeviceWildcard(targetDeviceId);
                 bool allSucceeded = true;
 
                 _logger.LogInformation("Granting publish rights for {GranteeDeviceId} to topic {Topic}...", granteeDeviceId, topic);
@@ -541,9 +559,7 @@ namespace garge_operator.Services
         {
             try
             {
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
 
                 var content = new StringContent(JsonSerializer.Serialize(devicePayload), Encoding.UTF8, "application/json");
                 var response = await client.PostAsync($"{_apiBaseUrl}/api/mqtt/discovered-device", content);
@@ -568,9 +584,7 @@ namespace garge_operator.Services
         {
             try
             {
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
                 var content = new StringContent(JsonSerializer.Serialize(createSensorData), Encoding.UTF8, "application/json");
                 var response = await client.PostAsync($"{_apiBaseUrl}/api/sensors", content);
                 response.EnsureSuccessStatusCode();
@@ -593,9 +607,7 @@ namespace garge_operator.Services
         {
             try
             {
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
                 var content = new StringContent(JsonSerializer.Serialize(createSwitchData), Encoding.UTF8, "application/json");
                 var response = await client.PostAsync($"{_apiBaseUrl}/api/switches", content);
                 response.EnsureSuccessStatusCode();
@@ -614,12 +626,11 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task<List<Sensor>> GetAllSensorsAsync(string token)
+        private async Task<List<Sensor>> GetAllSensorsAsync()
         {
             try
             {
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
                 var response = await client.GetAsync($"{_apiBaseUrl}/api/sensors");
 
                 if (!response.IsSuccessStatusCode)
@@ -631,11 +642,7 @@ namespace garge_operator.Services
                 var responseContent = await response.Content.ReadAsStringAsync();
                 _logger.LogDebug("Sensors response length: {Length}", responseContent.Length);
 
-                var jsonDocument = JsonDocument.Parse(responseContent);
-                var sensors = jsonDocument.RootElement.Deserialize<List<Sensor>>(new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
+                var sensors = JsonSerializer.Deserialize<List<Sensor>>(responseContent, JsonOptions);
 
                 if (sensors == null || !sensors.Any())
                 {
@@ -655,12 +662,11 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task<List<Switch>> GetAllSwitchesAsync(string token)
+        private async Task<List<Switch>> GetAllSwitchesAsync()
         {
             try
             {
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
                 var response = await client.GetAsync($"{_apiBaseUrl}/api/switches");
 
                 if (!response.IsSuccessStatusCode)
@@ -672,11 +678,7 @@ namespace garge_operator.Services
                 var responseContent = await response.Content.ReadAsStringAsync();
                 _logger.LogDebug("Switches response length: {Length}", responseContent.Length);
 
-                var jsonDocument = JsonDocument.Parse(responseContent);
-                var switches = jsonDocument.RootElement.Deserialize<List<Switch>>(new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
+                var switches = JsonSerializer.Deserialize<List<Switch>>(responseContent, JsonOptions);
 
                 if (switches == null || !switches.Any())
                 {
@@ -702,9 +704,7 @@ namespace garge_operator.Services
             {
                 _logger.LogInformation("Preparing to send data for sensor {SensorId} to API.", uniqId);
 
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
                 var content = new StringContent(JsonSerializer.Serialize(new { value = value }), Encoding.UTF8, "application/json");
 
                 var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/data";
@@ -733,9 +733,7 @@ namespace garge_operator.Services
             {
                 _logger.LogInformation("Preparing to send data for switch {UniqId} to API with key: {Key}", uniqId, key);
 
-                var token = await GetJwtTokenAsync();
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var client = await CreateAuthorizedClientAsync();
                 var content = new StringContent(JsonSerializer.Serialize(new { key, value }), Encoding.UTF8, "application/json");
 
                 var url = $"{_apiBaseUrl}/api/switches/name/{Uri.EscapeDataString(uniqId)}/data";
@@ -758,7 +756,7 @@ namespace garge_operator.Services
             }
         }
 
-        private static DateTime ParseJwtExpiry(string token)
+        private DateTime ParseJwtExpiry(string token)
         {
             try
             {
@@ -771,7 +769,11 @@ namespace garge_operator.Services
                 if (doc.RootElement.TryGetProperty("exp", out var expEl) && expEl.TryGetInt64(out var exp))
                     return DateTimeOffset.FromUnixTimeSeconds(exp).UtcDateTime;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Falling back to a conservative default expiry; log so the failure isn't silent.
+                _logger.LogDebug(ex, "Could not parse JWT expiry; using default refresh window.");
+            }
             return DateTime.UtcNow.AddMinutes(14);
         }
 
@@ -791,7 +793,7 @@ namespace garge_operator.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogError("Failed to retrieve JWT token. Status code: {StatusCode}, Reason: {ReasonPhrase}", response.StatusCode, response.ReasonPhrase);
-                    throw new Exception("Failed to retrieve JWT token.");
+                    throw new InvalidOperationException("Failed to retrieve JWT token.");
                 }
 
                 var responseContent = await response.Content.ReadAsStringAsync();
@@ -801,7 +803,7 @@ namespace garge_operator.Services
                 if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.Token))
                 {
                     _logger.LogError("JWT token is null or empty.");
-                    throw new Exception("Failed to retrieve JWT token.");
+                    throw new InvalidOperationException("Failed to retrieve JWT token.");
                 }
 
                 _cachedToken = tokenResponse.Token;
@@ -824,10 +826,12 @@ namespace garge_operator.Services
             try
             {
                 var normalizedPayload = payload.ToUpperInvariant();
-                string switchNameForPublish;
+                // The device id segment of the topic identifies the switch (e.g. garge/devices/{name}/set).
+                var switchNameForPublish = GargeTopics.TryParseDeviceTopic(topic, out var deviceId, out _, out _)
+                    ? deviceId
+                    : topic.Split('/')[2];
                 lock (_stateLock)
                 {
-                    switchNameForPublish = topic.Split('/')[2];
                     if (_lastPublishedSwitchStates.TryGetValue(switchNameForPublish, out var currentState) &&
                         string.Equals(currentState, normalizedPayload, StringComparison.Ordinal))
                     {
@@ -885,7 +889,7 @@ namespace garge_operator.Services
                     knownSwitch = _switchUniqIds.ContainsKey(switchName);
                 }
 
-                var topic = $"garge/devices/{switchName}/set";
+                var topic = GargeTopics.SetTopic(switchName);
 
                 if (knownSwitch)
                 {
