@@ -7,6 +7,7 @@ using garge_operator.Models;
 using MQTTnet.Packets;
 using garge_operator.Dtos.Mqtt;
 using garge_operator.Constants;
+using Microsoft.Extensions.Options;
 
 namespace garge_operator.Services
 {
@@ -15,7 +16,7 @@ namespace garge_operator.Services
         private readonly IManagedMqttClient _mqttClient;
         private readonly ManagedMqttClientOptions _mqttClientOptions;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly IConfiguration _configuration;
+        private readonly ITokenProvider _tokenProvider;
         private readonly ILogger<MqttService> _logger;
         private readonly string _apiBaseUrl;
         private List<Sensor> _sensors;
@@ -47,50 +48,34 @@ namespace garge_operator.Services
             return (now - cmd.SentAt) < graceWindow;
         }
 
-        // JWT token cache
-        private string? _cachedToken;
-        private DateTime _tokenExpiry = DateTime.MinValue;
-        private readonly SemaphoreSlim _tokenCacheLock = new(1, 1);
-
-        public MqttService(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<MqttService> logger)
+        public MqttService(
+            IHttpClientFactory httpClientFactory,
+            ITokenProvider tokenProvider,
+            IOptions<MqttOptions> mqttOptions,
+            IOptions<ApiOptions> apiOptions,
+            ILogger<MqttService> logger)
         {
             _httpClientFactory = httpClientFactory;
-            _configuration = configuration;
+            _tokenProvider = tokenProvider;
             _logger = logger;
             _sensorUniqIds = new Dictionary<string, string>();
             _switchUniqIds = new Dictionary<string, string>();
             _sensors = new List<Sensor>();
             _switches = new List<Switch>();
 
-            // Read and validate the broker and port.
-            var broker = configuration["Mqtt:Broker"];
-            if (string.IsNullOrWhiteSpace(broker))
-                throw new ArgumentException("Mqtt:Broker not set in configuration.");
-
-            var portString = configuration["Mqtt:Port"];
-            if (!int.TryParse(portString, out var port))
-                throw new ArgumentException("Mqtt:Port is invalid or not set in configuration.");
-
-            // Read and validate the API base URL.
-            var baseUrl = configuration["Api:BaseUrl"];
-            if (string.IsNullOrWhiteSpace(baseUrl))
-                throw new ArgumentException("Api:BaseUrl not set in configuration.");
-            _apiBaseUrl = baseUrl;
-
-            // Read and validate the username and password.
-            var username = configuration["Mqtt:Username"];
-            var password = configuration["Mqtt:Password"];
-            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-                throw new ArgumentException("Mqtt:Username or Mqtt:Password not set in configuration.");
+            // Configuration is bound and validated at startup (see Program.cs ValidateOnStart),
+            // so the values are guaranteed present here.
+            var mqtt = mqttOptions.Value;
+            _apiBaseUrl = apiOptions.Value.BaseUrl;
 
             var factory = new MqttFactory();
             _mqttClient = factory.CreateManagedMqttClient();
 
             var clientOptions = new MqttClientOptionsBuilder()
                 .WithClientId($"garge-operator-{Guid.NewGuid()}")
-                .WithTcpServer(broker, port)
+                .WithTcpServer(mqtt.Broker, mqtt.Port)
                 .WithTlsOptions(o => { o.UseTls(); })
-                .WithCredentials(username, password)
+                .WithCredentials(mqtt.Username, mqtt.Password)
                 .Build();
 
             _mqttClientOptions = new ManagedMqttClientOptionsBuilder()
@@ -117,10 +102,10 @@ namespace garge_operator.Services
             }
         }
 
-        public async Task ConnectAsync()
+        public async Task ConnectAsync(CancellationToken cancellationToken = default)
         {
             // Ensure login is successful before connecting to MQTT broker.
-            var token = await GetJwtTokenAsync();
+            var token = await _tokenProvider.GetJwtTokenAsync(cancellationToken);
             if (string.IsNullOrEmpty(token))
             {
                 // Without a token MQTT can never authenticate. Throw rather than return so the
@@ -132,10 +117,10 @@ namespace garge_operator.Services
             }
 
             // Get all sensors from the API
-            _sensors = await GetAllSensorsAsync();
+            _sensors = await GetAllSensorsAsync(cancellationToken);
 
             // Get all switches from the API
-            _switches = await GetAllSwitchesAsync();
+            _switches = await GetAllSwitchesAsync(cancellationToken);
 
             // Subscribe to the message received event
             _mqttClient.ApplicationMessageReceivedAsync += HandleReceivedMessage;
@@ -496,23 +481,15 @@ namespace garge_operator.Services
             }
         }
 
-        /// <summary>
-        /// Creates an <see cref="HttpClient"/> with a fresh Bearer token attached.
-        /// Centralizes the token-fetch + factory + Authorization-header boilerplate used by every API call.
-        /// </summary>
-        private async Task<HttpClient> CreateAuthorizedClientAsync()
-        {
-            var token = await GetJwtTokenAsync();
-            var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            return client;
-        }
+        // Resolves the authenticated garge-api client. The JWT bearer is attached automatically
+        // by BearerTokenHandler, so call sites no longer fetch tokens or set headers themselves.
+        private HttpClient CreateApiClient() => _httpClientFactory.CreateClient(GargeApiClient.Authorized);
 
         private async Task<bool> GrantDeviceControlAsync(string granteeDeviceId, string targetDeviceId)
         {
             try
             {
-                var client = await CreateAuthorizedClientAsync();
+                var client = CreateApiClient();
 
                 var topic = GargeTopics.DeviceWildcard(targetDeviceId);
                 bool allSucceeded = true;
@@ -531,8 +508,7 @@ namespace garge_operator.Services
                         Retain = retain ? 1 : 0
                     };
 
-                    var content = new StringContent(JsonSerializer.Serialize(aclPayload), Encoding.UTF8, "application/json");
-                    var response = await client.PostAsync($"{_apiBaseUrl}/api/mqtt/acl", content);
+                    var response = await HttpJson.PostJsonAsync(client, $"{_apiBaseUrl}/api/mqtt/acl", aclPayload);
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -559,10 +535,9 @@ namespace garge_operator.Services
         {
             try
             {
-                var client = await CreateAuthorizedClientAsync();
+                var client = CreateApiClient();
 
-                var content = new StringContent(JsonSerializer.Serialize(devicePayload), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/mqtt/discovered-device", content);
+                var response = await HttpJson.PostJsonAsync(client, $"{_apiBaseUrl}/api/mqtt/discovered-device", devicePayload);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -584,9 +559,8 @@ namespace garge_operator.Services
         {
             try
             {
-                var client = await CreateAuthorizedClientAsync();
-                var content = new StringContent(JsonSerializer.Serialize(createSensorData), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/sensors", content);
+                var client = CreateApiClient();
+                var response = await HttpJson.PostJsonAsync(client, $"{_apiBaseUrl}/api/sensors", createSensorData);
                 response.EnsureSuccessStatusCode();
                 _logger.LogDebug("Successfully created sensor: {SensorName}", createSensorData.Name);
                 return true;
@@ -607,9 +581,8 @@ namespace garge_operator.Services
         {
             try
             {
-                var client = await CreateAuthorizedClientAsync();
-                var content = new StringContent(JsonSerializer.Serialize(createSwitchData), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/switches", content);
+                var client = CreateApiClient();
+                var response = await HttpJson.PostJsonAsync(client, $"{_apiBaseUrl}/api/switches", createSwitchData);
                 response.EnsureSuccessStatusCode();
                 _logger.LogInformation("Successfully created switch: {SwitchName}", createSwitchData.Name);
                 return true;
@@ -626,12 +599,12 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task<List<Sensor>> GetAllSensorsAsync()
+        private async Task<List<Sensor>> GetAllSensorsAsync(CancellationToken cancellationToken = default)
         {
             try
             {
-                var client = await CreateAuthorizedClientAsync();
-                var response = await client.GetAsync($"{_apiBaseUrl}/api/sensors");
+                var client = CreateApiClient();
+                var response = await client.GetAsync($"{_apiBaseUrl}/api/sensors", cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -639,7 +612,7 @@ namespace garge_operator.Services
                     return new List<Sensor>();
                 }
 
-                var responseContent = await response.Content.ReadAsStringAsync();
+                var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogDebug("Sensors response length: {Length}", responseContent.Length);
 
                 var sensors = JsonSerializer.Deserialize<List<Sensor>>(responseContent, JsonOptions);
@@ -662,12 +635,12 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task<List<Switch>> GetAllSwitchesAsync()
+        private async Task<List<Switch>> GetAllSwitchesAsync(CancellationToken cancellationToken = default)
         {
             try
             {
-                var client = await CreateAuthorizedClientAsync();
-                var response = await client.GetAsync($"{_apiBaseUrl}/api/switches");
+                var client = CreateApiClient();
+                var response = await client.GetAsync($"{_apiBaseUrl}/api/switches", cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -675,7 +648,7 @@ namespace garge_operator.Services
                     return new List<Switch>();
                 }
 
-                var responseContent = await response.Content.ReadAsStringAsync();
+                var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogDebug("Switches response length: {Length}", responseContent.Length);
 
                 var switches = JsonSerializer.Deserialize<List<Switch>>(responseContent, JsonOptions);
@@ -698,18 +671,16 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task SendDataToApi(string uniqId, string value)
+        private async Task SendDataToApi(string uniqId, string value, CancellationToken cancellationToken = default)
         {
             try
             {
                 _logger.LogInformation("Preparing to send data for sensor {SensorId} to API.", uniqId);
 
-                var client = await CreateAuthorizedClientAsync();
-                var content = new StringContent(JsonSerializer.Serialize(new { value = value }), Encoding.UTF8, "application/json");
-
+                var client = CreateApiClient();
                 var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/data";
                 _logger.LogInformation("Sending data to API: {Url}", url);
-                var response = await client.PostAsync(url, content);
+                var response = await HttpJson.PostJsonAsync(client, url, new { value = value }, cancellationToken);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -717,7 +688,7 @@ namespace garge_operator.Services
                 }
                 else
                 {
-                    var responseContent = await response.Content.ReadAsStringAsync();
+                    var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
                     _logger.LogError("Failed to send data for sensor {SensorId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
                 }
             }
@@ -727,18 +698,16 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task SendSwitchDataToApi(string uniqId, string key, string value)
+        private async Task SendSwitchDataToApi(string uniqId, string key, string value, CancellationToken cancellationToken = default)
         {
             try
             {
                 _logger.LogInformation("Preparing to send data for switch {UniqId} to API with key: {Key}", uniqId, key);
 
-                var client = await CreateAuthorizedClientAsync();
-                var content = new StringContent(JsonSerializer.Serialize(new { key, value }), Encoding.UTF8, "application/json");
-
+                var client = CreateApiClient();
                 var url = $"{_apiBaseUrl}/api/switches/name/{Uri.EscapeDataString(uniqId)}/data";
                 _logger.LogInformation("Sending data to API: {Url}", url);
-                var response = await client.PostAsync(url, content);
+                var response = await HttpJson.PostJsonAsync(client, url, new { key, value }, cancellationToken);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -746,7 +715,7 @@ namespace garge_operator.Services
                 }
                 else
                 {
-                    var responseContent = await response.Content.ReadAsStringAsync();
+                    var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
                     _logger.LogError("Failed to send data for switch {UniqId} to API. Status code: {StatusCode}, Reason: {ReasonPhrase}, Response: {ResponseContent}", uniqId, response.StatusCode, response.ReasonPhrase, responseContent);
                 }
             }
@@ -756,70 +725,12 @@ namespace garge_operator.Services
             }
         }
 
-        private DateTime ParseJwtExpiry(string token)
-        {
-            try
-            {
-                var parts = token.Split('.');
-                if (parts.Length != 3) return DateTime.UtcNow.AddMinutes(14);
-                var padding = (4 - parts[1].Length % 4) % 4;
-                var base64 = parts[1].PadRight(parts[1].Length + padding, '=').Replace('-', '+').Replace('_', '/');
-                var json = Encoding.UTF8.GetString(Convert.FromBase64String(base64));
-                var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("exp", out var expEl) && expEl.TryGetInt64(out var exp))
-                    return DateTimeOffset.FromUnixTimeSeconds(exp).UtcDateTime;
-            }
-            catch (Exception ex)
-            {
-                // Falling back to a conservative default expiry; log so the failure isn't silent.
-                _logger.LogDebug(ex, "Could not parse JWT expiry; using default refresh window.");
-            }
-            return DateTime.UtcNow.AddMinutes(14);
-        }
-
-        public async Task<string> GetJwtTokenAsync()
-        {
-            await _tokenCacheLock.WaitAsync();
-            try
-            {
-                if (_cachedToken != null && DateTime.UtcNow < _tokenExpiry)
-                    return _cachedToken;
-
-                var client = _httpClientFactory.CreateClient();
-                var loginData = new { Email = _configuration["Api:Email"], Password = _configuration["Api:Password"] };
-                var content = new StringContent(JsonSerializer.Serialize(loginData), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync($"{_apiBaseUrl}/api/auth/login", content);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    _logger.LogError("Failed to retrieve JWT token. Status code: {StatusCode}, Reason: {ReasonPhrase}", response.StatusCode, response.ReasonPhrase);
-                    throw new InvalidOperationException("Failed to retrieve JWT token.");
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-                _logger.LogDebug("Successfully retrieved JWT token.");
-
-                var tokenResponse = JsonSerializer.Deserialize<JwtTokenResponse>(responseContent);
-                if (tokenResponse == null || string.IsNullOrEmpty(tokenResponse.Token))
-                {
-                    _logger.LogError("JWT token is null or empty.");
-                    throw new InvalidOperationException("Failed to retrieve JWT token.");
-                }
-
-                _cachedToken = tokenResponse.Token;
-                _tokenExpiry = ParseJwtExpiry(_cachedToken).AddSeconds(-60);
-                return _cachedToken;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving JWT token.");
-                throw;
-            }
-            finally
-            {
-                _tokenCacheLock.Release();
-            }
-        }
+        /// <summary>
+        /// Returns the cached JWT bearer used to authenticate against garge-api. Retained on
+        /// <see cref="IMqttService"/> for callers (for example the SignalR hub access-token
+        /// provider) that need the raw token; the value is sourced from <see cref="ITokenProvider"/>.
+        /// </summary>
+        public Task<string> GetJwtTokenAsync() => _tokenProvider.GetJwtTokenAsync();
 
         public async Task PublishSwitchDataAsync(string topic, string payload)
         {

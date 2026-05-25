@@ -1,8 +1,9 @@
 using System.Text.Json;
 using garge_operator.Dtos.Automation;
+using garge_operator.Models;
 using garge_operator.Services;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace garge_operator.Tests;
@@ -19,10 +20,8 @@ public abstract class WorkerTestBase
         var client = new HttpClient(HttpHandler);
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(client);
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Api:BaseUrl"] = ApiBase })
-            .Build();
-        return new Worker(NullLogger<Worker>.Instance, MockMqtt.Object, factory.Object, config);
+        var apiOptions = Options.Create(new ApiOptions { BaseUrl = ApiBase });
+        return new Worker(NullLogger<Worker>.Instance, MockMqtt.Object, factory.Object, apiOptions);
     }
 
     protected void SetupRules(params AutomationRuleDto[] rules)
