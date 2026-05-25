@@ -1,3 +1,4 @@
+using garge_operator.Models;
 using garge_operator.Services;
 using Serilog;
 
@@ -27,6 +28,30 @@ var host = Host.CreateDefaultBuilder(args)
         {
             options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.StopHost;
         });
+
+        // Bind strongly-typed configuration. DataAnnotations replace the former hand-rolled
+        // constructor validation; ValidateOnStart surfaces misconfiguration at startup so the
+        // pod fails fast instead of throwing lazily on first use. The section names and keys are
+        // unchanged (Mqtt:Broker, Mqtt:Port, Api:BaseUrl, ...) so existing appsettings and
+        // environment variables continue to bind.
+        services.AddOptions<MqttOptions>()
+            .Bind(context.Configuration.GetSection(MqttOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+        services.AddOptions<ApiOptions>()
+            .Bind(context.Configuration.GetSection(ApiOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // Token provider owns JWT fetch/caching and uses an unauthenticated login client.
+        services.AddSingleton<ITokenProvider, JwtTokenProvider>();
+        services.AddTransient<BearerTokenHandler>();
+
+        // Authenticated garge-api client: BearerTokenHandler attaches the JWT automatically.
+        services.AddHttpClient(GargeApiClient.Authorized)
+            .AddHttpMessageHandler<BearerTokenHandler>();
+        // Unauthenticated client used only for the login call (no bearer handler, no recursion).
+        services.AddHttpClient(JwtTokenProvider.LoginClientName);
 
         services.AddSingleton<IMqttService, MqttService>();
         services.AddHostedService<Worker>();

@@ -1,5 +1,7 @@
+using garge_operator.Models;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace garge_operator.Services
 {
@@ -17,18 +19,18 @@ namespace garge_operator.Services
         private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan ClosedRestartDelay = TimeSpan.FromSeconds(60);
 
-        private readonly IConfiguration _configuration;
+        private readonly string _apiBaseUrl;
         private readonly IMqttService _mqttService;
         private readonly ILogger<OperatorHubClient> _logger;
         private HubConnection? _connection;
         private CancellationToken _stoppingToken;
 
         public OperatorHubClient(
-            IConfiguration configuration,
+            IOptions<ApiOptions> apiOptions,
             IMqttService mqttService,
             ILogger<OperatorHubClient> logger)
         {
-            _configuration = configuration;
+            _apiBaseUrl = apiOptions.Value.BaseUrl;
             _mqttService = mqttService;
             _logger = logger;
         }
@@ -37,9 +39,7 @@ namespace garge_operator.Services
         {
             _stoppingToken = stoppingToken;
 
-            var apiBase = _configuration["Api:BaseUrl"]
-                          ?? throw new InvalidOperationException("Api:BaseUrl not configured");
-            var hubUrl = $"{apiBase.TrimEnd('/')}/hubs/devices";
+            var hubUrl = $"{_apiBaseUrl.TrimEnd('/')}/hubs/devices";
 
             _connection = new HubConnectionBuilder()
                 .WithUrl(hubUrl, opts =>

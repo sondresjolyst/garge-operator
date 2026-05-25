@@ -2,6 +2,8 @@ using System.Text.Json;
 using garge_operator.Services;
 using garge_operator.Dtos.Automation;
 using garge_operator.Constants;
+using garge_operator.Models;
+using Microsoft.Extensions.Options;
 
 public class Worker : BackgroundService
 {
@@ -11,7 +13,7 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IMqttService _mqttService;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IConfiguration _configuration;
+    private readonly string _apiBaseUrl;
 
     // Caches the last published action per switch, keyed by switch ID.
     private readonly Dictionary<int, string> _lastPublishedActions = new();
@@ -23,17 +25,17 @@ public class Worker : BackgroundService
         ILogger<Worker> logger,
         IMqttService mqttService,
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration)
+        IOptions<ApiOptions> apiOptions)
     {
         _logger = logger;
         _mqttService = mqttService;
         _httpClientFactory = httpClientFactory;
-        _configuration = configuration;
+        _apiBaseUrl = apiOptions.Value.BaseUrl;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await _mqttService.ConnectAsync();
+        await _mqttService.ConnectAsync(stoppingToken);
 
         // Reconcile rule state before entering the poll loop.
         try
@@ -73,8 +75,6 @@ public class Worker : BackgroundService
         var (client, rules) = await FetchRulesAsync(stoppingToken);
         if (client == null || rules == null) return;
 
-        var apiBaseUrl = _configuration["Api:BaseUrl"]!;
-
         foreach (var rule in rules)
         {
             if (!rule.IsEnabled)
@@ -101,21 +101,12 @@ public class Worker : BackgroundService
                         // Timer expired during operator downtime: turn the switch off and clear the timer.
                         _logger.LogInformation("Startup: timer expired for rule {RuleId}, turning OFF and clearing.", rule.Id);
                         await _mqttService.PublishSwitchDataAsync(topic, SwitchActions.Off);
-                        await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{rule.Id}/timer-clear", stoppingToken);
+                        await CallApiPatchAsync(client, $"{_apiBaseUrl}/api/automation/{rule.Id}/timer-clear", stoppingToken);
                     }
                     else
                     {
                         // Timer still active: re-enforce state, gated by the price condition when set.
-                        bool priceOk = true;
-                        if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
-                            rule.ElectricityPriceThreshold.HasValue &&
-                            !string.IsNullOrEmpty(rule.ElectricityPriceArea))
-                        {
-                            var price = await GetCurrentPriceAsync(client, apiBaseUrl, rule.ElectricityPriceArea, stoppingToken);
-                            if (price.HasValue)
-                                priceOk = EvaluateCondition(price.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
-                        }
-
+                        var priceOk = await EvaluateTimerPriceGateAsync(client, rule, stoppingToken);
                         var startupDesired = priceOk ? SwitchActions.On : SwitchActions.Off;
                         _logger.LogInformation("Startup: timer active for rule {RuleId}, enforcing '{Action}' (priceOk={PriceOk}).", rule.Id, startupDesired, priceOk);
                         await _mqttService.PublishSwitchDataAsync(topic, startupDesired);
@@ -127,23 +118,11 @@ public class Worker : BackgroundService
             else
             {
                 // Non-timed rule: evaluate the condition and enforce the correct state.
-                var sensorValue = await GetSensorValueAsync(client, apiBaseUrl, rule.SensorId, stoppingToken);
+                var sensorValue = await GetSensorValueAsync(client, rule.SensorId, stoppingToken);
                 if (sensorValue == null) continue;
 
                 bool conditionMet = EvaluateSensorCondition(sensorValue.Value, rule.Condition, rule.Threshold);
-
-                if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
-                    rule.ElectricityPriceThreshold.HasValue &&
-                    !string.IsNullOrEmpty(rule.ElectricityPriceArea))
-                {
-                    var price = await GetCurrentPriceAsync(client, apiBaseUrl, rule.ElectricityPriceArea, stoppingToken);
-                    if (price.HasValue)
-                    {
-                        var priceConditionMet = EvaluateCondition(price.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold!.Value);
-                        var logicalOp = (rule.ElectricityPriceOperator ?? "AND").ToUpperInvariant();
-                        conditionMet = logicalOp == "OR" ? conditionMet || priceConditionMet : conditionMet && priceConditionMet;
-                    }
-                }
+                conditionMet = await CombineWithPriceConditionAsync(client, rule, conditionMet, stoppingToken);
 
                 if (rule.Action.ToLowerInvariant() != SwitchActions.On && rule.Action.ToLowerInvariant() != SwitchActions.Off)
                 {
@@ -171,8 +150,6 @@ public class Worker : BackgroundService
     {
         var (client, rules) = await FetchRulesAsync(stoppingToken);
         if (client == null || rules == null) return;
-
-        var apiBaseUrl = _configuration["Api:BaseUrl"]!;
 
         _logger.LogInformation("Loaded {Count} automation rules.", rules.Count);
 
@@ -216,21 +193,12 @@ public class Worker : BackgroundService
                         _logger.LogInformation("Rule {RuleId}: timer elapsed ({Elapsed:hh\\:mm}), turning OFF.", rule.Id, elapsed);
                         await _mqttService.PublishSwitchDataAsync(topic, SwitchActions.Off);
                         _lastPublishedActions[rule.TargetId] = SwitchActions.Off;
-                        await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{rule.Id}/timer-clear", stoppingToken);
+                        await CallApiPatchAsync(client, $"{_apiBaseUrl}/api/automation/{rule.Id}/timer-clear", stoppingToken);
                     }
                     else
                     {
                         // Timer still running: gate the socket on the price condition. The sensor only acts as a trigger.
-                        bool priceOk = true;
-                        if (!string.IsNullOrEmpty(rule.ElectricityPriceCondition) &&
-                            rule.ElectricityPriceThreshold.HasValue &&
-                            !string.IsNullOrEmpty(rule.ElectricityPriceArea))
-                        {
-                            var price = await GetCurrentPriceAsync(client, apiBaseUrl, rule.ElectricityPriceArea, stoppingToken);
-                            if (price.HasValue)
-                                priceOk = EvaluateCondition(price.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
-                        }
-
+                        var priceOk = await EvaluateTimerPriceGateAsync(client, rule, stoppingToken);
                         var desired = priceOk ? SwitchActions.On : SwitchActions.Off;
                         var last = _lastPublishedActions.GetValueOrDefault(rule.TargetId);
                         if (last != desired)
@@ -244,29 +212,45 @@ public class Worker : BackgroundService
                 }
 
                 // Timer idle: check the trigger condition.
-                var sensorValue = await GetSensorValueAsync(client, apiBaseUrl, rule.SensorId, stoppingToken);
+                var sensorValue = await GetSensorValueAsync(client, rule.SensorId, stoppingToken);
                 if (sensorValue == null) continue;
 
                 bool conditionMet = EvaluateSensorCondition(sensorValue.Value, rule.Condition, rule.Threshold);
-                conditionMet = await CombineWithPriceConditionAsync(client, apiBaseUrl, rule, conditionMet, stoppingToken);
+                conditionMet = await CombineWithPriceConditionAsync(client, rule, conditionMet, stoppingToken);
 
                 if (conditionMet)
                 {
+                    // BEHAVIOR CHANGE (idempotency, #4): record the timer in the API BEFORE publishing
+                    // "on". Previously the operator published "on" first and only then called
+                    // timer-start; a crash in that window left the switch physically ON while the API
+                    // had no TimerActivatedAt, so the next poll re-evaluated the trigger from scratch
+                    // and double-triggered (restarting the timer, re-publishing, re-marking triggered).
+                    //
+                    // New ordering: call timer-start first and only publish "on" if it succeeded. If the
+                    // process dies after timer-start but before the publish, the next poll sees a non-null
+                    // TimerActivatedAt and enters the "timer running" branch, which idempotently enforces
+                    // the desired (price-gated) state instead of re-triggering. If timer-start fails, we
+                    // skip the publish so the switch is never turned on without recorded timer state.
                     _logger.LogInformation("Rule {RuleId}: condition met, starting {Duration}h timer, turning ON.", rule.Id, rule.TimerDurationHours.Value);
+                    var timerStarted = await CallApiPatchAsync(client, $"{_apiBaseUrl}/api/automation/{rule.Id}/timer-start", stoppingToken);
+                    if (!timerStarted)
+                    {
+                        _logger.LogWarning("Rule {RuleId}: timer-start failed; not publishing ON to keep switch and API state consistent.", rule.Id);
+                        continue;
+                    }
                     await _mqttService.PublishSwitchDataAsync(topic, SwitchActions.On);
                     _lastPublishedActions[rule.TargetId] = SwitchActions.On;
-                    await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{rule.Id}/timer-start", stoppingToken);
-                    await MarkTriggeredAsync(client, apiBaseUrl, rule.Id, stoppingToken);
+                    await MarkTriggeredAsync(client, rule.Id, stoppingToken);
                 }
                 continue;
             }
 
             // ── Standard (non-timed) rule handling ───────────────────────────
-            var stdSensorValue = await GetSensorValueAsync(client, apiBaseUrl, rule.SensorId, stoppingToken);
+            var stdSensorValue = await GetSensorValueAsync(client, rule.SensorId, stoppingToken);
             if (stdSensorValue == null) continue;
 
             bool stdConditionMet = EvaluateSensorCondition(stdSensorValue.Value, rule.Condition, rule.Threshold);
-            stdConditionMet = await CombineWithPriceConditionAsync(client, apiBaseUrl, rule, stdConditionMet, stoppingToken);
+            stdConditionMet = await CombineWithPriceConditionAsync(client, rule, stdConditionMet, stoppingToken);
 
             _logger.LogInformation("Rule {RuleId} conditionMet={ConditionMet}", rule.Id, stdConditionMet);
 
@@ -294,7 +278,7 @@ public class Worker : BackgroundService
             _logger.LogInformation("Publishing action '{Action}' to switch {SwitchName} due to rule {RuleId}.", action, targetSwitch.Name, rule.Id);
             await _mqttService.PublishSwitchDataAsync(topic, action);
             _lastPublishedActions[rule.TargetId] = action;
-            await MarkTriggeredAsync(client, apiBaseUrl, rule.Id, stoppingToken);
+            await MarkTriggeredAsync(client, rule.Id, stoppingToken);
             }
             catch (Exception ex)
             {
@@ -306,24 +290,11 @@ public class Worker : BackgroundService
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Creates an <see cref="HttpClient"/> with a fresh Bearer token attached.
-    /// Centralizes the token-fetch + factory + Authorization-header boilerplate.
-    /// </summary>
-    private async Task<HttpClient> CreateAuthorizedClientAsync()
-    {
-        var client = _httpClientFactory.CreateClient();
-        var token = await _mqttService.GetJwtTokenAsync();
-        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        return client;
-    }
-
     private async Task<(HttpClient? Client, List<AutomationRuleDto>? Rules)> FetchRulesAsync(CancellationToken stoppingToken)
     {
-        var apiBaseUrl = _configuration["Api:BaseUrl"];
-        var client = await CreateAuthorizedClientAsync();
+        var client = _httpClientFactory.CreateClient(GargeApiClient.Authorized);
 
-        var response = await client.GetAsync($"{apiBaseUrl}/api/automation", stoppingToken);
+        var response = await client.GetAsync($"{_apiBaseUrl}/api/automation", stoppingToken);
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("Failed to fetch automation rules. Status: {StatusCode}", response.StatusCode);
@@ -341,9 +312,9 @@ public class Worker : BackgroundService
         return (client, rules);
     }
 
-    private async Task<double?> GetSensorValueAsync(HttpClient client, string apiBaseUrl, int sensorId, CancellationToken stoppingToken)
+    private async Task<double?> GetSensorValueAsync(HttpClient client, int sensorId, CancellationToken stoppingToken)
     {
-        var sensorResponse = await client.GetAsync($"{apiBaseUrl}/api/sensors/{sensorId}/latest-data", stoppingToken);
+        var sensorResponse = await client.GetAsync($"{_apiBaseUrl}/api/sensors/{sensorId}/latest-data", stoppingToken);
         if (!sensorResponse.IsSuccessStatusCode)
         {
             _logger.LogWarning("Failed to fetch latest data for sensor {SensorId}. Status: {StatusCode}", sensorId, sensorResponse.StatusCode);
@@ -388,28 +359,59 @@ public class Worker : BackgroundService
         _    => false
     };
 
-    private async Task<bool> CombineWithPriceConditionAsync(HttpClient client, string apiBaseUrl, AutomationRuleDto rule, bool sensorConditionMet, CancellationToken stoppingToken)
+    /// <summary>
+    /// Returns true when a rule has no electricity-price condition configured.
+    /// </summary>
+    private static bool HasPriceCondition(AutomationRuleDto rule)
+        => !string.IsNullOrEmpty(rule.ElectricityPriceCondition)
+           && rule.ElectricityPriceThreshold.HasValue
+           && !string.IsNullOrEmpty(rule.ElectricityPriceArea);
+
+    /// <summary>
+    /// Evaluates the price gate for a running timed rule. The sensor only triggers a timed rule;
+    /// while the timer runs the socket is gated purely on the electricity price. Returns true
+    /// (allow ON) when no price condition is configured or the price could not be fetched, matching
+    /// the historical default. Shared by both the poll loop and startup reconciliation so the two
+    /// paths cannot diverge.
+    /// </summary>
+    private async Task<bool> EvaluateTimerPriceGateAsync(HttpClient client, AutomationRuleDto rule, CancellationToken stoppingToken)
     {
-        if (string.IsNullOrEmpty(rule.ElectricityPriceCondition) ||
-            !rule.ElectricityPriceThreshold.HasValue ||
-            string.IsNullOrEmpty(rule.ElectricityPriceArea))
+        if (!HasPriceCondition(rule))
+            return true;
+
+        var price = await GetCurrentPriceAsync(client, rule.ElectricityPriceArea!, stoppingToken);
+        if (!price.HasValue)
+            return true;
+
+        return EvaluateCondition(price.Value, rule.ElectricityPriceCondition!, rule.ElectricityPriceThreshold!.Value);
+    }
+
+    /// <summary>
+    /// Combines a satisfied sensor condition with the optional electricity-price condition using the
+    /// rule's AND/OR operator. When a price condition is configured but the price cannot be fetched,
+    /// returns false (skip) so the operator never acts on a partially-evaluated rule. Shared by both
+    /// the poll loop and startup reconciliation so the two paths cannot diverge.
+    /// </summary>
+    private async Task<bool> CombineWithPriceConditionAsync(HttpClient client, AutomationRuleDto rule, bool sensorConditionMet, CancellationToken stoppingToken)
+    {
+        if (!HasPriceCondition(rule))
             return sensorConditionMet;
 
-        var currentPrice = await GetCurrentPriceAsync(client, apiBaseUrl, rule.ElectricityPriceArea, stoppingToken);
+        var currentPrice = await GetCurrentPriceAsync(client, rule.ElectricityPriceArea!, stoppingToken);
         if (!currentPrice.HasValue)
         {
             _logger.LogWarning("Rule {RuleId}: could not fetch electricity price for area {Area}, skipping.", rule.Id, rule.ElectricityPriceArea);
             return false;
         }
 
-        var priceConditionMet = EvaluateCondition(currentPrice.Value, rule.ElectricityPriceCondition, rule.ElectricityPriceThreshold.Value);
+        var priceConditionMet = EvaluateCondition(currentPrice.Value, rule.ElectricityPriceCondition!, rule.ElectricityPriceThreshold!.Value);
         _logger.LogInformation("Rule {RuleId} priceConditionMet={Met} (price={Price})", rule.Id, priceConditionMet, currentPrice.Value);
 
         var logicalOp = (rule.ElectricityPriceOperator ?? "AND").ToUpperInvariant();
         return logicalOp == "OR" ? sensorConditionMet || priceConditionMet : sensorConditionMet && priceConditionMet;
     }
 
-    private async Task<double?> GetCurrentPriceAsync(HttpClient client, string apiBaseUrl, string area, CancellationToken stoppingToken)
+    private async Task<double?> GetCurrentPriceAsync(HttpClient client, string area, CancellationToken stoppingToken)
     {
         var now = DateTime.UtcNow;
         if (_priceCache.TryGetValue(area, out var cached) && cached.ValidUntil > now)
@@ -417,7 +419,7 @@ public class Worker : BackgroundService
 
         try
         {
-            var priceResponse = await client.GetAsync($"{apiBaseUrl}/api/electricity/current-price?area={Uri.EscapeDataString(area)}", stoppingToken);
+            var priceResponse = await client.GetAsync($"{_apiBaseUrl}/api/electricity/current-price?area={Uri.EscapeDataString(area)}", stoppingToken);
             if (!priceResponse.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Failed to fetch current price for area {Area}. Status: {StatusCode}", area, priceResponse.StatusCode);
@@ -439,20 +441,30 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task CallApiPatchAsync(HttpClient client, string url, CancellationToken stoppingToken)
+    /// <summary>
+    /// Issues a PATCH against the API. Returns true when the call succeeds. The boolean result lets
+    /// callers that must keep API and device state consistent (for example timer-start before
+    /// publishing ON) gate the subsequent publish on a recorded state change.
+    /// </summary>
+    private async Task<bool> CallApiPatchAsync(HttpClient client, string url, CancellationToken stoppingToken)
     {
         try
         {
             var response = await client.PatchAsync(url, null, stoppingToken);
             if (!response.IsSuccessStatusCode)
+            {
                 _logger.LogWarning("PATCH {Url} failed with status {StatusCode}.", url, response.StatusCode);
+                return false;
+            }
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not PATCH {Url}.", url);
+            return false;
         }
     }
 
-    private async Task MarkTriggeredAsync(HttpClient client, string apiBaseUrl, int ruleId, CancellationToken stoppingToken)
-        => await CallApiPatchAsync(client, $"{apiBaseUrl}/api/automation/{ruleId}/triggered", stoppingToken);
+    private async Task MarkTriggeredAsync(HttpClient client, int ruleId, CancellationToken stoppingToken)
+        => await CallApiPatchAsync(client, $"{_apiBaseUrl}/api/automation/{ruleId}/triggered", stoppingToken);
 }
