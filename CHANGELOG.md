@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/sondresjolyst/garge-operator/compare/v1.8.0...v1.8.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* **operator:** ship timer-start idempotency for timed automations ([#140](https://github.com/sondresjolyst/garge-operator/issues/140)) ([76643ea](https://github.com/sondresjolyst/garge-operator/commit/76643ea1e5af518ae684e087596f3d05e9132ef3))
+
 ## [1.8.0](https://github.com/sondresjolyst/garge-operator/compare/v1.7.0...v1.8.0) (2026-05-19)
 
 
