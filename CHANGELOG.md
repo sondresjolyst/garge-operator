@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.8.1](https://github.com/sondresjolyst/garge-operator/compare/v1.8.0...v1.8.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* **operator:** ship timer-start idempotency for timed automations ([#140](https://github.com/sondresjolyst/garge-operator/issues/140)) ([76643ea](https://github.com/sondresjolyst/garge-operator/commit/76643ea1e5af518ae684e087596f3d05e9132ef3))
+
+
+### Dependencies
+
+* bump `actions/checkout` from 6.0.2 to 6.0.3 ([#150](https://github.com/sondresjolyst/garge-operator/issues/150)) ([556208b](https://github.com/sondresjolyst/garge-operator/commit/556208b8e50e24a3837218d10f02aed3196ec4c3))
+* bump `actions/setup-dotnet` from 5.2.0 to 5.3.0 ([#145](https://github.com/sondresjolyst/garge-operator/issues/145)) ([b17d020](https://github.com/sondresjolyst/garge-operator/commit/b17d02044df5b9281db90fc34af90c79b9bfca53))
+* bump `coverlet.collector` from 10.0.0 to 10.0.1 ([#143](https://github.com/sondresjolyst/garge-operator/issues/143)) ([d30a207](https://github.com/sondresjolyst/garge-operator/commit/d30a207eb844b230b3e69454bd19bc1f77340625))
+* bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.37.3 to 9.38.0 ([#131](https://github.com/sondresjolyst/garge-operator/issues/131)) ([bcc589d](https://github.com/sondresjolyst/garge-operator/commit/bcc589d28523f9fc32e760bdc9cf6ab29d478b41))
+* bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.38.0 to 9.38.1 ([#144](https://github.com/sondresjolyst/garge-operator/issues/144)) ([9d13a8f](https://github.com/sondresjolyst/garge-operator/commit/9d13a8fc2b7a3a91d7b28e7415e4b8b3c87f69d0))
+* bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.38.1 to 9.38.2 ([#148](https://github.com/sondresjolyst/garge-operator/issues/148)) ([d23cf95](https://github.com/sondresjolyst/garge-operator/commit/d23cf958250cfdf7fb385395223ae13c5566d8a7))
+* bump `equinor/ops-actions/.github/workflows/release-please.yml` from 9.37.3 to 9.38.0 ([#130](https://github.com/sondresjolyst/garge-operator/issues/130)) ([2c62625](https://github.com/sondresjolyst/garge-operator/commit/2c62625a7de3aebef6ec8d4ba7f240e7c9987aab))
+* bump `equinor/ops-actions/.github/workflows/release-please.yml` from 9.38.0 to 9.38.1 ([#146](https://github.com/sondresjolyst/garge-operator/issues/146)) ([0c3e593](https://github.com/sondresjolyst/garge-operator/commit/0c3e5932dc6c6ebfde0f1f39cbfbcfe362c42f13))
+* bump `equinor/ops-actions/.github/workflows/release-please.yml` from 9.38.1 to 9.38.2 ([#149](https://github.com/sondresjolyst/garge-operator/issues/149)) ([2fc9d34](https://github.com/sondresjolyst/garge-operator/commit/2fc9d3488652a467925257c24794ed0c94c678b4))
+* bump `Microsoft.AspNetCore.SignalR.Client` from 10.0.7 to 10.0.8 ([#132](https://github.com/sondresjolyst/garge-operator/issues/132)) ([08e45cc](https://github.com/sondresjolyst/garge-operator/commit/08e45cc5c14ac7a3d7e220343b9e49d90c8d6a00))
+* bump `Microsoft.AspNetCore.SignalR.Client` from 10.0.8 to 10.0.9 ([#151](https://github.com/sondresjolyst/garge-operator/issues/151)) ([403896a](https://github.com/sondresjolyst/garge-operator/commit/403896a38588d53d4dbe39703ea9a53554028f94))
+* bump `Microsoft.Extensions.Hosting` from 10.0.7 to 10.0.8 ([#133](https://github.com/sondresjolyst/garge-operator/issues/133)) ([3f4dfd7](https://github.com/sondresjolyst/garge-operator/commit/3f4dfd78217c9301abb305912fc3355513a9f4d0))
+* bump `Microsoft.Extensions.Hosting` from 10.0.8 to 10.0.9 ([#152](https://github.com/sondresjolyst/garge-operator/issues/152)) ([716f546](https://github.com/sondresjolyst/garge-operator/commit/716f546699c323ff11c586d6af3cde427b8d78a7))
+* bump `Microsoft.Extensions.Http` from 10.0.7 to 10.0.8 ([#134](https://github.com/sondresjolyst/garge-operator/issues/134)) ([f9a4995](https://github.com/sondresjolyst/garge-operator/commit/f9a499522cc0ddd14003049086173ddde77047c8))
+* bump `Microsoft.Extensions.Http` from 10.0.8 to 10.0.9 ([#153](https://github.com/sondresjolyst/garge-operator/issues/153)) ([800f60a](https://github.com/sondresjolyst/garge-operator/commit/800f60a21da9aa3afc4c0c5c06ff8c90b50ded34))
+* bump `Microsoft.Extensions.Logging.Abstractions` from 10.0.8 to 10.0.9 ([#154](https://github.com/sondresjolyst/garge-operator/issues/154)) ([307401f](https://github.com/sondresjolyst/garge-operator/commit/307401f7ac60ac9b0ddeca347cf5d5a49fd6560c))
+* bump `Microsoft.NET.Test.Sdk` from 18.5.1 to 18.6.0 ([#147](https://github.com/sondresjolyst/garge-operator/issues/147)) ([7eeb723](https://github.com/sondresjolyst/garge-operator/commit/7eeb72323a4e4a87345d9dc438765dc84433da98))
+
 ## [1.8.1](https://github.com/sondresjolyst/garge-operator/compare/v1.8.0...v1.8.1) (2026-05-25)
 
 
