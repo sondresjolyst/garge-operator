@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.8.3](https://github.com/sondresjolyst/garge-operator/compare/v1.8.2...v1.8.3) (2026-06-28)
+
+
+### Dependencies
+
+* bump `actions/checkout` from 6.0.3 to 7.0.0 ([#160](https://github.com/sondresjolyst/garge-operator/issues/160)) ([0bbd96a](https://github.com/sondresjolyst/garge-operator/commit/0bbd96a601677a2ab4cace550337f79a3fee9a82))
+* bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.38.2 to 9.38.3 ([#161](https://github.com/sondresjolyst/garge-operator/issues/161)) ([0af906a](https://github.com/sondresjolyst/garge-operator/commit/0af906a9b1f388282714e11a4e835ecfabb38e7a))
+* bump `equinor/ops-actions/.github/workflows/release-please-manifest.yml` from 9.38.2 to 9.38.3 ([#162](https://github.com/sondresjolyst/garge-operator/issues/162)) ([f463a7d](https://github.com/sondresjolyst/garge-operator/commit/f463a7ddd5ca10e92b370069ddcbfc4b3c5be227))
+* bump `Serilog.Settings.Configuration` from 10.0.0 to 10.0.1 ([#163](https://github.com/sondresjolyst/garge-operator/issues/163)) ([f6073a7](https://github.com/sondresjolyst/garge-operator/commit/f6073a7a1824080c77a6d8dafb361f8e389d6e82))
+
 ## [1.8.2](https://github.com/sondresjolyst/garge-operator/compare/v1.8.1...v1.8.2) (2026-06-22)
 
 
