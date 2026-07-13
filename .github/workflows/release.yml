@@ -17,7 +17,7 @@ jobs:
   release-please:
     name: Release Please
     if: ${{ github.event_name == 'push' }}
-    uses: equinor/ops-actions/.github/workflows/release-please-manifest.yml@8cf05342045a745a619bce94b04f235051a2a068 # v9.38.4
+    uses: equinor/ops-actions/.github/workflows/release-please-manifest.yml@e8dfd5776985e7d74c93787841b1a1b830d80175 # v9.39.1
     permissions:
       contents: write
       pull-requests: write
