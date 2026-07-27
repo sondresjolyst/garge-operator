@@ -24,5 +24,11 @@ namespace garge_operator.Models
 
         [Required(AllowEmptyStrings = false, ErrorMessage = "Mqtt:Username or Mqtt:Password not set in configuration.")]
         public string Password { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Local-development escape hatch: accept broker certificates that fail chain validation
+        /// (e.g. antivirus TLS interception on a dev machine). Never enable in production.
+        /// </summary>
+        public bool AllowUntrustedCertificates { get; set; }
     }
 }
