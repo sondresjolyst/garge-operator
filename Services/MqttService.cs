@@ -37,6 +37,12 @@ namespace garge_operator.Services
         private readonly Dictionary<string, (string Action, DateTime SentAt)> _lastCommandedAt = new();
         internal static readonly TimeSpan CommandEchoGrace = TimeSpan.FromSeconds(30);
 
+        // A pairing claim can race the device's config handling: the API answers 404 while no
+        // sensor/switch rows exist yet for the parent, so the claim is retried a few times
+        // before giving up. 400/410 mean the token itself is bad and are never retried.
+        internal const int PairingClaimMaxRetries = 5;
+        internal static readonly TimeSpan PairingClaimRetryDelay = TimeSpan.FromSeconds(3);
+
         internal static bool IsPreSwitchEcho(
             string incomingState,
             (string Action, DateTime SentAt)? lastCommand,
@@ -74,7 +80,16 @@ namespace garge_operator.Services
             var clientOptions = new MqttClientOptionsBuilder()
                 .WithClientId($"garge-operator-{Guid.NewGuid()}")
                 .WithTcpServer(mqtt.Broker, mqtt.Port)
-                .WithTlsOptions(o => { o.UseTls(); })
+                .WithTlsOptions(o =>
+                {
+                    o.UseTls();
+                    if (mqtt.AllowUntrustedCertificates)
+                    {
+                        _logger.LogWarning("MQTT TLS certificate validation is DISABLED (Mqtt:AllowUntrustedCertificates) — dev use only.");
+                        o.WithAllowUntrustedCertificates(true);
+                        o.WithCertificateValidationHandler(_ => true);
+                    }
+                })
                 .WithCredentials(mqtt.Username, mqtt.Password)
                 .Build();
 
@@ -139,9 +154,10 @@ namespace garge_operator.Services
                         new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/config").Build(),
                         new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/state").Build(),
                         new MqttTopicFilterBuilder().WithTopic("garge/devices/+/+/set").Build(),
+                        new MqttTopicFilterBuilder().WithTopic("garge/devices/+/pairing").Build(),
                         new MqttTopicFilterBuilder().WithTopic("garge/devices/+/discovered_devices/+/discovered").Build()
                     });
-                    _logger.LogInformation("Subscribed to garge/devices/+/config, garge/devices/+/+/config, state, set topics and device discovery events.");
+                    _logger.LogInformation("Subscribed to garge/devices/+/config, garge/devices/+/+/config, state, set, pairing topics and device discovery events.");
                 }
                 catch (Exception ex)
                 {
@@ -350,6 +366,10 @@ namespace garge_operator.Services
                             _logger.LogWarning("Entity {Entity} not found in switch or sensor lists.", entity);
                         }
                         break;
+
+                    case "pairing":
+                        await HandleDevicePairing(deviceId, payload);
+                        break;
                 }
             }
             catch (JsonException ex)
@@ -478,6 +498,135 @@ namespace garge_operator.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling switch config.");
+            }
+        }
+
+        /// <summary>
+        /// Extracts the pairing token from a pairing payload. The payload is normally JSON of the
+        /// form <c>{"token":"ABC123"}</c>, but a plain-string payload is tolerated: when JSON
+        /// parsing fails, the trimmed payload itself is treated as the token.
+        /// </summary>
+        internal static bool TryParsePairingToken(string payload, out string token)
+        {
+            token = string.Empty;
+            if (string.IsNullOrWhiteSpace(payload)) return false;
+
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<PairingPayload>(payload, JsonOptions);
+                token = parsed?.Token?.Trim() ?? string.Empty;
+            }
+            catch (JsonException)
+            {
+                token = payload.Trim();
+            }
+
+            return !string.IsNullOrEmpty(token);
+        }
+
+        private async Task HandleDevicePairing(string deviceName, string payload)
+        {
+            try
+            {
+                if (!IsValidDeviceId(deviceName))
+                {
+                    _logger.LogWarning("Rejecting pairing message with invalid device name: {DeviceName}", deviceName);
+                    return;
+                }
+
+                if (!TryParsePairingToken(payload, out var token))
+                {
+                    _logger.LogWarning("Pairing message for {DeviceName} did not contain a usable token.", deviceName);
+                    return;
+                }
+
+                // The firmware publishes parent_name = its own device name (the topic's device
+                // segment), and HandleSensorConfig stores that value as ParentName on created
+                // sensors. Reusing the topic segment here therefore matches the ParentName
+                // persisted in the API database.
+                var parentName = deviceName;
+
+                _logger.LogInformation("Received pairing token for {DeviceName}, claiming via API.", deviceName);
+                await ClaimPairingTokenAsync(token, parentName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling pairing message for {DeviceName}.", deviceName);
+            }
+        }
+
+        private async Task ClaimPairingTokenAsync(string token, string parentName)
+        {
+            try
+            {
+                var client = CreateApiClient();
+
+                for (var attempt = 1; attempt <= PairingClaimMaxRetries + 1; attempt++)
+                {
+                    var response = await HttpJson.PostJsonAsync(client, $"{_apiBaseUrl}/api/pairing/claim", new { token, parentName });
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var responseContent = await response.Content.ReadAsStringAsync();
+                        PairingClaimResponse? result = null;
+                        try
+                        {
+                            result = JsonSerializer.Deserialize<PairingClaimResponse>(responseContent, JsonOptions);
+                        }
+                        catch (JsonException ex)
+                        {
+                            _logger.LogWarning(ex, "Could not deserialize pairing claim response for {ParentName}.", parentName);
+                        }
+
+                        _logger.LogInformation(
+                            "Claimed pairing token for {ParentName}: {SensorCount} sensors, {SwitchCount} switches, {SkippedCount} skipped.",
+                            parentName,
+                            result?.ClaimedSensorIds?.Count ?? 0,
+                            result?.ClaimedSwitchIds?.Count ?? 0,
+                            result?.Skipped ?? 0);
+                        return;
+                    }
+
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    {
+                        // Retryable: the device's config messages may still be in flight, so the
+                        // API may not have created sensor/switch rows for this parent yet.
+                        if (attempt <= PairingClaimMaxRetries)
+                        {
+                            _logger.LogInformation(
+                                "No devices found yet for {ParentName} (attempt {Attempt}/{MaxAttempts}), retrying in {Delay}...",
+                                parentName, attempt, PairingClaimMaxRetries + 1, PairingClaimRetryDelay);
+                            await Task.Delay(PairingClaimRetryDelay);
+                            continue;
+                        }
+
+                        var notFoundError = await response.Content.ReadAsStringAsync();
+                        _logger.LogError(
+                            "Giving up claiming pairing token for {ParentName} after {Attempts} attempts: StatusCode={StatusCode}, Response={Error}",
+                            parentName, attempt, response.StatusCode, notFoundError);
+                        return;
+                    }
+
+                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest ||
+                        response.StatusCode == System.Net.HttpStatusCode.Gone)
+                    {
+                        var invalidError = await response.Content.ReadAsStringAsync();
+                        _logger.LogWarning(
+                            "Pairing token for {ParentName} was rejected as invalid, expired or already consumed: StatusCode={StatusCode}, Response={Error}",
+                            parentName, response.StatusCode, invalidError);
+                        return;
+                    }
+
+                    var error = await response.Content.ReadAsStringAsync();
+                    _logger.LogError(
+                        "Failed to claim pairing token for {ParentName}: StatusCode={StatusCode}, Response={Error}",
+                        parentName, response.StatusCode, error);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error claiming pairing token for {ParentName}.", parentName);
             }
         }
 
