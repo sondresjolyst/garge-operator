@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.9.1](https://github.com/sondresjolyst/garge-operator/compare/v1.9.0...v1.9.1) (2026-08-02)
+
+
+### Dependencies
+
+* **github-actions:** bump `actions/checkout` from 7.0.0 to 7.0.1 ([#183](https://github.com/sondresjolyst/garge-operator/issues/183)) ([cf206b4](https://github.com/sondresjolyst/garge-operator/commit/cf206b4128928c175c9bad0e48444022ea6d0108))
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.39.2 to 9.39.3 ([#184](https://github.com/sondresjolyst/garge-operator/issues/184)) ([924384c](https://github.com/sondresjolyst/garge-operator/commit/924384c1db7bca7dde72f2d3264e7bd58692b180))
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/release-please-manifest.yml` from 9.39.2 to 9.39.3 ([#182](https://github.com/sondresjolyst/garge-operator/issues/182)) ([94dfa79](https://github.com/sondresjolyst/garge-operator/commit/94dfa79da9c214ca3235047d0915574991c7e462))
+* **nuget:** bump `Microsoft.NET.Test.Sdk` from 18.7.0 to 18.8.1 ([#185](https://github.com/sondresjolyst/garge-operator/issues/185)) ([5d25d92](https://github.com/sondresjolyst/garge-operator/commit/5d25d92edc5a12fa268a1e186e7a27f5330269b0))
+
 ## [1.9.0](https://github.com/sondresjolyst/garge-operator/compare/v1.8.2...v1.9.0) (2026-07-27)
 
 
