@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.2](https://github.com/sondresjolyst/garge-operator/compare/v1.9.1...v1.9.2) (2026-08-09)
+
+
+### Dependencies
+
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.39.3 to 9.39.4 ([#188](https://github.com/sondresjolyst/garge-operator/issues/188)) ([b444c0d](https://github.com/sondresjolyst/garge-operator/commit/b444c0d0f3d8f1f160e61682a3dfe795542a05b3))
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/release-please-manifest.yml` from 9.39.3 to 9.39.4 ([#189](https://github.com/sondresjolyst/garge-operator/issues/189)) ([0b3bd54](https://github.com/sondresjolyst/garge-operator/commit/0b3bd54013ea5ee3e5c5578da9e2667c7e192f90))
+
 ## [1.9.1](https://github.com/sondresjolyst/garge-operator/compare/v1.9.0...v1.9.1) (2026-08-02)
 
 
