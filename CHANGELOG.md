@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.3](https://github.com/sondresjolyst/garge-operator/compare/v1.9.2...v1.9.3) (2026-08-24)
+
+
+### Dependencies
+
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.39.4 to 9.39.6 ([#191](https://github.com/sondresjolyst/garge-operator/issues/191)) ([9c6fc4c](https://github.com/sondresjolyst/garge-operator/commit/9c6fc4c4512d78d7a93d873877bbb0f9266e93e8))
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/docker.yml` from 9.39.6 to 9.40.0 ([#195](https://github.com/sondresjolyst/garge-operator/issues/195)) ([02779d9](https://github.com/sondresjolyst/garge-operator/commit/02779d97878d0014095562aa59661fa359dee722))
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/release-please-manifest.yml` from 9.39.4 to 9.39.6 ([#192](https://github.com/sondresjolyst/garge-operator/issues/192)) ([2a7cc3d](https://github.com/sondresjolyst/garge-operator/commit/2a7cc3d22752ac32e788cee8c81cc2c04b3d474e))
+* **github-actions:** bump `equinor/ops-actions/.github/workflows/release-please-manifest.yml` from 9.39.6 to 9.40.0 ([#194](https://github.com/sondresjolyst/garge-operator/issues/194)) ([5edc7d2](https://github.com/sondresjolyst/garge-operator/commit/5edc7d2bdcbda38f2df89339e77460033e654acc))
+* **nuget:** bump `Microsoft.AspNetCore.SignalR.Client` from 10.0.10 to 10.0.11 ([#196](https://github.com/sondresjolyst/garge-operator/issues/196)) ([0a04e3c](https://github.com/sondresjolyst/garge-operator/commit/0a04e3c4ebc77725e3196b80db901cdbbbf85bb7))
+* **nuget:** bump `Microsoft.Extensions.Logging.Abstractions` from 10.0.10 to 10.0.11 ([#199](https://github.com/sondresjolyst/garge-operator/issues/199)) ([535b4f2](https://github.com/sondresjolyst/garge-operator/commit/535b4f2c01afe3fd8a35fbd3f1e90ae06ab87a04))
+* **nuget:** Bump Microsoft.Extensions.Hosting and Microsoft.Extensions.Logging.Abstractions ([#197](https://github.com/sondresjolyst/garge-operator/issues/197)) ([3939ce9](https://github.com/sondresjolyst/garge-operator/commit/3939ce926d5193c03f73b9f6047f90df2c4130fb))
+
 ## [1.9.2](https://github.com/sondresjolyst/garge-operator/compare/v1.9.1...v1.9.2) (2026-08-09)
 
 
