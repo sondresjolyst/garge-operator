@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.4](https://github.com/sondresjolyst/garge-operator/compare/v1.9.3...v1.9.4) (2026-08-29)
+
+
+### Dependencies
+
+* **nuget:** bump `Microsoft.Extensions.Http` from 10.0.10 to 10.0.11 ([#202](https://github.com/sondresjolyst/garge-operator/issues/202)) ([b8ed135](https://github.com/sondresjolyst/garge-operator/commit/b8ed1350401446f0feaa2d78723de0f15ad02804))
+* **nuget:** bump `Microsoft.NET.Test.Sdk` from 18.8.1 to 18.9.0 ([#203](https://github.com/sondresjolyst/garge-operator/issues/203)) ([19dbc6b](https://github.com/sondresjolyst/garge-operator/commit/19dbc6bcb2a7616263a7f64d0ff8899b9abe3803))
+* **nuget:** migrate tests to xunit.v3 ([#206](https://github.com/sondresjolyst/garge-operator/issues/206)) ([bd6a3e5](https://github.com/sondresjolyst/garge-operator/commit/bd6a3e564fea51c47b03387183bec8504e80a989))
+
 ## [1.9.3](https://github.com/sondresjolyst/garge-operator/compare/v1.9.2...v1.9.3) (2026-08-24)
 
 
