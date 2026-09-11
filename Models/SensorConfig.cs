@@ -22,5 +22,11 @@ namespace garge_operator.Models
         public required string ValTpl { get; set; }
         [JsonPropertyName("parent_name")]
         public required string ParentName { get; set; }
+        [JsonPropertyName("sleep_s")]
+        public int? SleepS { get; set; }
+        [JsonPropertyName("security")]
+        public bool? Security { get; set; }
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
     }
 }
