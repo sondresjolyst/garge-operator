@@ -11,6 +11,12 @@ public class GargeTopicsTests
     }
 
     [Fact]
+    public void SettingsTopic_BuildsExpectedString()
+    {
+        Assert.Equal("garge/devices/garge_0a1b2c3d4e5f/settings", GargeTopics.SettingsTopic("garge_0a1b2c3d4e5f"));
+    }
+
+    [Fact]
     public void DeviceWildcard_BuildsExpectedString()
     {
         Assert.Equal("garge/devices/my-device/#", GargeTopics.DeviceWildcard("my-device"));

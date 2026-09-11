@@ -54,8 +54,10 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddHttpClient(JwtTokenProvider.LoginClientName);
 
         services.AddSingleton<IMqttService, MqttService>();
+        services.AddSingleton<DeviceSettingsSync>();
         services.AddHostedService<Worker>();
         services.AddHostedService<OperatorHubClient>();
+        services.AddHostedService<OperatorHeartbeatService>();
         services.AddHttpClient();
     })
     .Build();
