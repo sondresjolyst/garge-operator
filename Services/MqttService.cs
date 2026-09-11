@@ -26,6 +26,8 @@ namespace garge_operator.Services
         private readonly object _stateLock = new();
         private readonly object _listsLock = new();
         private readonly Dictionary<string, string> _lastPublishedSwitchStates = new();
+        private readonly SemaphoreSlim _settingsPublishLock = new(1, 1);
+        private readonly Dictionary<string, long> _lastPublishedSettingsVersions = new();
 
         // Reused across all deserialization calls to avoid per-call allocation.
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -60,7 +62,19 @@ namespace garge_operator.Services
             IOptions<MqttOptions> mqttOptions,
             IOptions<ApiOptions> apiOptions,
             ILogger<MqttService> logger)
+            : this(new MqttFactory().CreateManagedMqttClient(), httpClientFactory, tokenProvider, mqttOptions, apiOptions, logger)
         {
+        }
+
+        internal MqttService(
+            IManagedMqttClient mqttClient,
+            IHttpClientFactory httpClientFactory,
+            ITokenProvider tokenProvider,
+            IOptions<MqttOptions> mqttOptions,
+            IOptions<ApiOptions> apiOptions,
+            ILogger<MqttService> logger)
+        {
+            _mqttClient = mqttClient;
             _httpClientFactory = httpClientFactory;
             _tokenProvider = tokenProvider;
             _logger = logger;
@@ -73,9 +87,6 @@ namespace garge_operator.Services
             // so the values are guaranteed present here.
             var mqtt = mqttOptions.Value;
             _apiBaseUrl = apiOptions.Value.BaseUrl;
-
-            var factory = new MqttFactory();
-            _mqttClient = factory.CreateManagedMqttClient();
 
             var clientOptions = new MqttClientOptionsBuilder()
                 .WithClientId($"garge-operator-{Guid.NewGuid()}")
@@ -108,6 +119,8 @@ namespace garge_operator.Services
                 }
             }
         }
+
+        public bool IsConnected => _mqttClient.IsConnected;
 
         public Switch? GetSwitch(int targetId)
         {
@@ -225,7 +238,7 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task HandleReceivedMessage(MqttApplicationMessageReceivedEventArgs e)
+        internal async Task HandleReceivedMessage(MqttApplicationMessageReceivedEventArgs e)
         {
             try
             {
@@ -276,7 +289,7 @@ namespace garge_operator.Services
                             {
                                 var sensorConfig = JsonSerializer.Deserialize<SensorConfig>(payload);
                                 if (sensorConfig != null)
-                                    await HandleSensorConfig(sensorConfig);
+                                    await HandleSensorConfig(sensorConfig, e.ApplicationMessage.Retain);
                             }
                             catch (Exception ex)
                             {
@@ -382,7 +395,7 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task HandleSensorConfig(SensorConfig sensorConfig)
+        private async Task HandleSensorConfig(SensorConfig sensorConfig, bool retained)
         {
             try
             {
@@ -434,6 +447,14 @@ namespace garge_operator.Services
                 lock (_listsLock)
                 {
                     _logger.LogDebug("Current uniq_id keys: {Keys}", string.Join(", ", _sensorUniqIds.Keys));
+                }
+
+                if (sensorConfig.SleepS is { } sleepSeconds)
+                {
+                    if (retained)
+                        _logger.LogDebug("Ignoring retained settings ack for sensor {UniqId}.", sensorConfig.UniqId);
+                    else
+                        await SendReportedSettingsToApi(sensorConfig.UniqId, sleepSeconds, sensorConfig.Security ?? false, sensorConfig.Version);
                 }
             }
             catch (Exception ex)
@@ -847,6 +868,32 @@ namespace garge_operator.Services
             }
         }
 
+        private async Task SendReportedSettingsToApi(string uniqId, int sleepSeconds, bool securityEnabled, string? version)
+        {
+            try
+            {
+                var client = CreateApiClient();
+                var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/reported-settings";
+                var response = await HttpJson.PostJsonAsync(client, url, new { sleepSeconds, securityEnabled, version });
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation(
+                        "Reported settings for sensor {UniqId}: SleepSeconds={SleepSeconds}, SecurityEnabled={SecurityEnabled}.",
+                        uniqId, sleepSeconds, securityEnabled);
+                }
+                else
+                {
+                    var responseContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Failed to report settings for sensor {UniqId}. Status code: {StatusCode}, Response: {ResponseContent}", uniqId, response.StatusCode, responseContent);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reporting settings for sensor {UniqId}.", uniqId);
+            }
+        }
+
         private async Task SendSwitchDataToApi(string uniqId, string key, string value, CancellationToken cancellationToken = default)
         {
             try
@@ -966,6 +1013,67 @@ namespace garge_operator.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling switch event.");
+            }
+        }
+
+        internal static string BuildSettingsPayload(DeviceSettingsEvent evt)
+            => JsonSerializer.Serialize(new
+            {
+                sleep_s = evt.SleepSeconds,
+                security = evt.SecurityEnabled,
+                floor_mv = evt.FloorMillivolts,
+                v = evt.Version,
+            });
+
+        private async Task PublishRetainedJsonAsync(string topic, string json)
+        {
+            var message = new MqttApplicationMessageBuilder()
+                .WithTopic(topic)
+                .WithPayload(json)
+                .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                .WithRetainFlag()
+                .Build();
+
+            await _mqttClient.EnqueueAsync(message);
+        }
+
+        public async Task HandleDeviceSettingsEventAsync(DeviceSettingsEvent evt)
+        {
+            try
+            {
+                if (!IsValidDeviceId(evt.DeviceName))
+                {
+                    _logger.LogWarning("Device settings event contains invalid device name: {DeviceName}", evt.DeviceName);
+                    return;
+                }
+
+                var topic = GargeTopics.SettingsTopic(evt.DeviceName);
+                var payload = BuildSettingsPayload(evt);
+
+                await _settingsPublishLock.WaitAsync();
+                try
+                {
+                    if (_lastPublishedSettingsVersions.TryGetValue(evt.DeviceName, out var lastVersion) && evt.Version < lastVersion)
+                    {
+                        _logger.LogInformation(
+                            "Skipping settings version {Version} for {DeviceName}: version {LastVersion} already published.",
+                            evt.Version, evt.DeviceName, lastVersion);
+                        return;
+                    }
+
+                    await PublishRetainedJsonAsync(topic, payload);
+                    _lastPublishedSettingsVersions[evt.DeviceName] = evt.Version;
+                }
+                finally
+                {
+                    _settingsPublishLock.Release();
+                }
+
+                _logger.LogInformation("Published settings {Payload} to topic {Topic}.", payload, topic);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling device settings event.");
             }
         }
     }

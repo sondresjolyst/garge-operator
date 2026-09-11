@@ -16,11 +16,13 @@ namespace garge_operator.Services
     public class OperatorHubClient : BackgroundService
     {
         private const string SwitchEventName = "switch";
+        private const string DeviceSettingsEventName = "deviceSettings";
         private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan ClosedRestartDelay = TimeSpan.FromSeconds(60);
 
         private readonly string _apiBaseUrl;
         private readonly IMqttService _mqttService;
+        private readonly DeviceSettingsSync _deviceSettingsSync;
         private readonly ILogger<OperatorHubClient> _logger;
         private HubConnection? _connection;
         private CancellationToken _stoppingToken;
@@ -28,10 +30,12 @@ namespace garge_operator.Services
         public OperatorHubClient(
             IOptions<ApiOptions> apiOptions,
             IMqttService mqttService,
+            DeviceSettingsSync deviceSettingsSync,
             ILogger<OperatorHubClient> logger)
         {
             _apiBaseUrl = apiOptions.Value.BaseUrl;
             _mqttService = mqttService;
+            _deviceSettingsSync = deviceSettingsSync;
             _logger = logger;
         }
 
@@ -61,16 +65,24 @@ namespace garge_operator.Services
                 }
             });
 
+            _connection.On<DeviceSettingsEvent>(DeviceSettingsEventName, async evt =>
+            {
+                try
+                {
+                    await _mqttService.HandleDeviceSettingsEventAsync(evt);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "OperatorHubClient: failed to handle device settings event");
+                }
+            });
+
             _connection.Reconnecting += error =>
             {
                 _logger.LogWarning(error, "OperatorHubClient: reconnecting");
                 return Task.CompletedTask;
             };
-            _connection.Reconnected += connectionId =>
-            {
-                _logger.LogInformation("OperatorHubClient: reconnected ({ConnectionId})", connectionId);
-                return Task.CompletedTask;
-            };
+            _connection.Reconnected += OnReconnectedAsync;
             _connection.Closed += async error =>
             {
                 if (_stoppingToken.IsCancellationRequested) return;
@@ -104,16 +116,30 @@ namespace garge_operator.Services
                 {
                     if (_connection!.State == HubConnectionState.Connected) return;
                     await _connection!.StartAsync(_stoppingToken);
-                    _logger.LogInformation("OperatorHubClient: connected to {HubUrl}", hubUrl);
-                    return;
                 }
                 catch (Exception ex) when (!_stoppingToken.IsCancellationRequested)
                 {
                     _logger.LogWarning(ex, "OperatorHubClient: connect failed, retrying in {Delay}",
                         InitialRetryDelay);
                     await Task.Delay(InitialRetryDelay, _stoppingToken);
+                    continue;
                 }
+
+                await OnConnectedAsync(hubUrl);
+                return;
             }
+        }
+
+        internal async Task OnConnectedAsync(string hubUrl)
+        {
+            _logger.LogInformation("OperatorHubClient: connected to {HubUrl}", hubUrl);
+            await _deviceSettingsSync.RepublishAsync(_stoppingToken);
+        }
+
+        internal async Task OnReconnectedAsync(string? connectionId)
+        {
+            _logger.LogInformation("OperatorHubClient: reconnected ({ConnectionId})", connectionId);
+            await _deviceSettingsSync.RepublishAsync(_stoppingToken);
         }
 
         public override async Task StopAsync(CancellationToken cancellationToken)
