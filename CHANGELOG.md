@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.9.5](https://github.com/sondresjolyst/garge-operator/compare/v1.9.4...v1.9.5) (2026-09-21)
+
+
+### Dependencies
+
+* **nuget:** bump `Microsoft.AspNetCore.SignalR.Client` from 10.0.11 to 10.0.12 ([#212](https://github.com/sondresjolyst/garge-operator/issues/212)) ([aa11bae](https://github.com/sondresjolyst/garge-operator/commit/aa11bae62122d94909ab8bd606dc0d91e1ed7fd0))
+* **nuget:** bump `Microsoft.Extensions.Hosting` from 10.0.11 to 10.0.12 ([#219](https://github.com/sondresjolyst/garge-operator/issues/219)) ([9e189bd](https://github.com/sondresjolyst/garge-operator/commit/9e189bd731c69121145973d6f9c6de5462a4ee4b))
+* **nuget:** bump `Microsoft.Extensions.Http` from 10.0.11 to 10.0.12 ([#220](https://github.com/sondresjolyst/garge-operator/issues/220)) ([2a1dcd4](https://github.com/sondresjolyst/garge-operator/commit/2a1dcd49c7a20c2490bcf3d3b14297059f8c256d))
+* **nuget:** bump `Microsoft.Extensions.Logging.Abstractions` from 10.0.11 to 10.0.12 ([#215](https://github.com/sondresjolyst/garge-operator/issues/215)) ([6465ff7](https://github.com/sondresjolyst/garge-operator/commit/6465ff796988d05da795c59e9f06c9cf3dc9942a))
+* **nuget:** bump `xunit.v3` from 4.0.0 to 4.0.1 ([#216](https://github.com/sondresjolyst/garge-operator/issues/216)) ([0e38168](https://github.com/sondresjolyst/garge-operator/commit/0e38168dce7f7bfa6e9fd9be59bfe225dc144d23))
+
 ## [1.9.4](https://github.com/sondresjolyst/garge-operator/compare/v1.9.3...v1.9.4) (2026-08-29)
 
 
