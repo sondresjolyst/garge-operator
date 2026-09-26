@@ -21,7 +21,8 @@ public abstract class WorkerTestBase
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(client);
         var apiOptions = Options.Create(new ApiOptions { BaseUrl = ApiBase });
-        return new Worker(NullLogger<Worker>.Instance, MockMqtt.Object, factory.Object, apiOptions);
+        var deviceSettingsSync = new DeviceSettingsSync(factory.Object, MockMqtt.Object, apiOptions, NullLogger<DeviceSettingsSync>.Instance);
+        return new Worker(NullLogger<Worker>.Instance, MockMqtt.Object, factory.Object, deviceSettingsSync, apiOptions);
     }
 
     protected void SetupRules(params AutomationRuleDto[] rules)
