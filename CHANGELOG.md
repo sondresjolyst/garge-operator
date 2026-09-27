@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.0](https://github.com/sondresjolyst/garge-operator/compare/v1.9.5...v1.10.0) (2026-09-27)
+
+
+### Features
+
+* forward the battery floor a device reports ([#223](https://github.com/sondresjolyst/garge-operator/issues/223)) ([56f845a](https://github.com/sondresjolyst/garge-operator/commit/56f845af63450e664a0f52bdbcb381e79670c564))
+* relay garge security settings ([#209](https://github.com/sondresjolyst/garge-operator/issues/209)) ([e873062](https://github.com/sondresjolyst/garge-operator/commit/e873062600477ead35583b8fbc1246e128918bc0))
+
 ## [1.9.5](https://github.com/sondresjolyst/garge-operator/compare/v1.9.4...v1.9.5) (2026-09-21)
 
 
