@@ -461,7 +461,7 @@ namespace garge_operator.Services
                     if (retained)
                         _logger.LogDebug("Ignoring retained settings ack for sensor {UniqId}.", sensorConfig.UniqId);
                     else
-                        await SendReportedSettingsToApi(sensorConfig.UniqId, sleepSeconds, sensorConfig.Security ?? false, sensorConfig.Version);
+                        await SendReportedSettingsToApi(sensorConfig.UniqId, sleepSeconds, sensorConfig.Security ?? false, sensorConfig.Version, sensorConfig.FloorMillivolts);
                 }
             }
             catch (Exception ex)
@@ -875,7 +875,7 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task SendReportedSettingsToApi(string uniqId, int sleepSeconds, bool securityEnabled, string? version)
+        private async Task SendReportedSettingsToApi(string uniqId, int sleepSeconds, bool securityEnabled, string? version, int? floorMillivolts)
         {
             var client = CreateApiClient();
             var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/reported-settings";
@@ -884,7 +884,7 @@ namespace garge_operator.Services
             {
                 try
                 {
-                    var response = await HttpJson.PostJsonAsync(client, url, new { sleepSeconds, securityEnabled, version });
+                    var response = await HttpJson.PostJsonAsync(client, url, new { sleepSeconds, securityEnabled, version, floorMillivolts });
 
                     if (response.IsSuccessStatusCode)
                     {

@@ -26,6 +26,10 @@ namespace garge_operator.Models
         public int? SleepS { get; set; }
         [JsonPropertyName("security")]
         public bool? Security { get; set; }
+        // Null carries "no floor", so absent and null are distinguished: a device on
+        // older firmware omits the field entirely and the API keeps its old behaviour.
+        [JsonPropertyName("floor_mv")]
+        public int? FloorMillivolts { get; set; }
         [JsonPropertyName("version")]
         public string? Version { get; set; }
     }
