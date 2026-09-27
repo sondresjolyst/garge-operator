@@ -45,6 +45,13 @@ namespace garge_operator.Services
         internal const int PairingClaimMaxRetries = 5;
         internal static readonly TimeSpan PairingClaimRetryDelay = TimeSpan.FromSeconds(3);
 
+        // A dropped ack leaves the API without ArmedAt until the device publishes its
+        // config again, which is a wake cycle away: ten minutes for an armed sensor and
+        // up to six hours for one that has backed off. ApplyAckAsync is idempotent, so
+        // retrying costs nothing.
+        internal const int ReportedSettingsMaxRetries = 2;
+        internal static readonly TimeSpan ReportedSettingsRetryDelay = TimeSpan.FromSeconds(2);
+
         internal static bool IsPreSwitchEcho(
             string incomingState,
             (string Action, DateTime SentAt)? lastCommand,
@@ -870,27 +877,42 @@ namespace garge_operator.Services
 
         private async Task SendReportedSettingsToApi(string uniqId, int sleepSeconds, bool securityEnabled, string? version)
         {
-            try
-            {
-                var client = CreateApiClient();
-                var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/reported-settings";
-                var response = await HttpJson.PostJsonAsync(client, url, new { sleepSeconds, securityEnabled, version });
+            var client = CreateApiClient();
+            var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/reported-settings";
 
-                if (response.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation(
-                        "Reported settings for sensor {UniqId}: SleepSeconds={SleepSeconds}, SecurityEnabled={SecurityEnabled}.",
-                        uniqId, sleepSeconds, securityEnabled);
-                }
-                else
-                {
-                    var responseContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Failed to report settings for sensor {UniqId}. Status code: {StatusCode}, Response: {ResponseContent}", uniqId, response.StatusCode, responseContent);
-                }
-            }
-            catch (Exception ex)
+            for (var attempt = 1; attempt <= ReportedSettingsMaxRetries + 1; attempt++)
             {
-                _logger.LogError(ex, "Error reporting settings for sensor {UniqId}.", uniqId);
+                try
+                {
+                    var response = await HttpJson.PostJsonAsync(client, url, new { sleepSeconds, securityEnabled, version });
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation(
+                            "Reported settings for sensor {UniqId}: SleepSeconds={SleepSeconds}, SecurityEnabled={SecurityEnabled}.",
+                            uniqId, sleepSeconds, securityEnabled);
+                        return;
+                    }
+
+                    // A refusal is settled; only a server-side or transport fault is worth
+                    // trying again.
+                    var responseContent = await response.Content.ReadAsStringAsync();
+                    var retryable = (int)response.StatusCode >= 500;
+                    _logger.LogError("Failed to report settings for sensor {UniqId}. Status code: {StatusCode}, Response: {ResponseContent}", uniqId, response.StatusCode, responseContent);
+                    if (!retryable) return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error reporting settings for sensor {UniqId}.", uniqId);
+                }
+
+                if (attempt <= ReportedSettingsMaxRetries)
+                {
+                    _logger.LogWarning(
+                        "Retrying reported settings for {UniqId} (attempt {Attempt}/{MaxAttempts}) in {Delay}.",
+                        uniqId, attempt, ReportedSettingsMaxRetries + 1, ReportedSettingsRetryDelay);
+                    await Task.Delay(ReportedSettingsRetryDelay);
+                }
             }
         }
 

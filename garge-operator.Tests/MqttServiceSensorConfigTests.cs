@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using garge_operator.Models;
+using garge_operator.Services;
 
 namespace garge_operator.Tests;
 
@@ -72,6 +73,35 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
 
         Assert.Contains($"POST {ApiBase}/api/sensors", HttpHandler.MatchedRequests);
         Assert.DoesNotContain($"POST {ReportedSettingsUrl}", HttpHandler.MatchedRequests);
+    }
+
+    // A dropped ack leaves the API without ArmedAt until the device publishes its
+    // config again, a wake cycle away, so a server-side fault is worth retrying.
+    [Fact]
+    public async Task ConfigWithSettingsFields_ReportedSettingsServerError_IsRetried()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, "boom", HttpStatusCode.InternalServerError);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, AckConfig));
+
+        Assert.Equal(
+            MqttService.ReportedSettingsMaxRetries + 1,
+            HttpHandler.MatchedRequests.Count(r => r == $"POST {ReportedSettingsUrl}"));
+    }
+
+    // A refusal is settled: the sensor is unknown, so asking again cannot help.
+    [Fact]
+    public async Task ConfigWithSettingsFields_ReportedSettingsRefused_IsNotRetried()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, "not found", HttpStatusCode.NotFound);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, AckConfig));
+
+        Assert.Single(HttpHandler.MatchedRequests, r => r == $"POST {ReportedSettingsUrl}");
     }
 
     [Fact]
