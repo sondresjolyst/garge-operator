@@ -51,6 +51,7 @@ namespace garge_operator.Services
         // retrying costs nothing.
         internal const int ReportedSettingsMaxRetries = 2;
         internal static readonly TimeSpan ReportedSettingsRetryDelay = TimeSpan.FromSeconds(2);
+        internal static TimeSpan ReportedSettingsTotalTimeout = TimeSpan.FromSeconds(20);
 
         internal static bool IsPreSwitchEcho(
             string incomingState,
@@ -461,7 +462,7 @@ namespace garge_operator.Services
                     if (retained)
                         _logger.LogDebug("Ignoring retained settings ack for sensor {UniqId}.", sensorConfig.UniqId);
                     else
-                        await SendReportedSettingsToApi(sensorConfig.UniqId, sleepSeconds, sensorConfig.Security ?? false, sensorConfig.Version);
+                        await SendReportedSettingsToApi(sensorConfig.UniqId, sleepSeconds, sensorConfig.Security ?? false, sensorConfig.Version, sensorConfig.FloorReported, sensorConfig.FloorMillivolts);
                 }
             }
             catch (Exception ex)
@@ -875,16 +876,22 @@ namespace garge_operator.Services
             }
         }
 
-        private async Task SendReportedSettingsToApi(string uniqId, int sleepSeconds, bool securityEnabled, string? version)
+        private async Task SendReportedSettingsToApi(string uniqId, int sleepSeconds, bool securityEnabled, string? version, bool floorReported, int? floorMillivolts)
         {
             var client = CreateApiClient();
             var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/reported-settings";
+
+            // The MQTT handler awaits this, so the whole attempt sequence is bounded:
+            // the shared client carries the 100 s default timeout, and three of those
+            // plus the delays would stop every other message for five minutes.
+            using var timeout = new CancellationTokenSource(ReportedSettingsTotalTimeout);
+            var ct = timeout.Token;
 
             for (var attempt = 1; attempt <= ReportedSettingsMaxRetries + 1; attempt++)
             {
                 try
                 {
-                    var response = await HttpJson.PostJsonAsync(client, url, new { sleepSeconds, securityEnabled, version });
+                    var response = await HttpJson.PostJsonAsync(client, url, new { sleepSeconds, securityEnabled, version, floorReported, floorMillivolts }, ct);
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -896,10 +903,15 @@ namespace garge_operator.Services
 
                     // A refusal is settled; only a server-side or transport fault is worth
                     // trying again.
-                    var responseContent = await response.Content.ReadAsStringAsync();
+                    var responseContent = await response.Content.ReadAsStringAsync(ct);
                     var retryable = (int)response.StatusCode >= 500;
                     _logger.LogError("Failed to report settings for sensor {UniqId}. Status code: {StatusCode}, Response: {ResponseContent}", uniqId, response.StatusCode, responseContent);
                     if (!retryable) return;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Reporting settings for sensor {UniqId} gave up after {Timeout}.", uniqId, ReportedSettingsTotalTimeout);
+                    return;
                 }
                 catch (Exception ex)
                 {
@@ -911,7 +923,14 @@ namespace garge_operator.Services
                     _logger.LogWarning(
                         "Retrying reported settings for {UniqId} (attempt {Attempt}/{MaxAttempts}) in {Delay}.",
                         uniqId, attempt, ReportedSettingsMaxRetries + 1, ReportedSettingsRetryDelay);
-                    await Task.Delay(ReportedSettingsRetryDelay);
+                    try
+                    {
+                        await Task.Delay(ReportedSettingsRetryDelay, ct);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
                 }
             }
         }

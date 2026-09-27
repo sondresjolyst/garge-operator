@@ -17,6 +17,15 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
     private const string UnversionedConfig =
         """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f"}""";
 
+    private const string AckConfigWithFloor =
+        """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.15.0","sleep_s":600,"security":true,"floor_mv":12550}""";
+
+    private const string AckConfigWithNullFloor =
+        """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.15.0","sleep_s":3600,"security":false,"floor_mv":null}""";
+
+    private const string AckConfigWithAStringFloor =
+        """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.15.0","sleep_s":600,"security":true,"floor_mv":"12550"}""";
+
     private const string AckConfig =
         """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.15.0","sleep_s":600,"security":true}""";
 
@@ -59,7 +68,93 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
         await service.HandleReceivedMessage(Received(ConfigTopic, AckConfig));
 
         var (_, body) = Assert.Single(HttpHandler.RequestBodies, r => r.Request == $"POST {ReportedSettingsUrl}");
-        Assert.Equal("{\"sleepSeconds\":600,\"securityEnabled\":true,\"version\":\"v1.15.0\"}", body);
+        Assert.Equal("{\"sleepSeconds\":600,\"securityEnabled\":true,\"version\":\"v1.15.0\",\"floorReported\":false,\"floorMillivolts\":null}", body);
+    }
+
+    // The server checks the reported floor against the one it asked for, so it has to
+    // arrive. Firmware without the field omits it, which forwards as floorReported
+    // false and leaves the server's older behaviour intact.
+    [Fact]
+    public async Task ConfigWithFloor_ForwardsTheFloorToTheApi()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, AckConfigWithFloor));
+
+        var (_, body) = Assert.Single(HttpHandler.RequestBodies, r => r.Request == $"POST {ReportedSettingsUrl}");
+        Assert.Equal("{\"sleepSeconds\":600,\"securityEnabled\":true,\"version\":\"v1.15.0\",\"floorReported\":true,\"floorMillivolts\":12550}", body);
+    }
+
+    // A device that has no floor sends the key with a null value. That is not the same
+    // as firmware that never sends it: the server must see it and refuse to arm.
+    [Fact]
+    public async Task ConfigWithANullFloor_ReportsTheFloorAsSent()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, AckConfigWithNullFloor));
+
+        var (_, body) = Assert.Single(HttpHandler.RequestBodies, r => r.Request == $"POST {ReportedSettingsUrl}");
+        Assert.Equal("{\"sleepSeconds\":3600,\"securityEnabled\":false,\"version\":\"v1.15.0\",\"floorReported\":true,\"floorMillivolts\":null}", body);
+    }
+
+    // A floor of the wrong shape must not take the whole config down with it: the
+    // sensor still has to register, and the ack still has to reach the server.
+    [Fact]
+    public async Task ConfigWithAFloorThatIsNotANumber_StillRegistersAndReports()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, AckConfigWithAStringFloor));
+
+        Assert.Contains($"POST {ApiBase}/api/sensors", HttpHandler.MatchedRequests);
+        var (_, body) = Assert.Single(HttpHandler.RequestBodies, r => r.Request == $"POST {ReportedSettingsUrl}");
+        Assert.Equal("{\"sleepSeconds\":600,\"securityEnabled\":true,\"version\":\"v1.15.0\",\"floorReported\":true,\"floorMillivolts\":null}", body);
+    }
+
+    // The MQTT handler awaits the report, so the attempt sequence has to be bounded:
+    // three of the HTTP client's 100 s default timeouts would stop every other message
+    // for minutes.
+    [Fact]
+    public async Task ConfigWithSettingsFields_SlowApi_GivesUpAtTheTimeout()
+    {
+        var original = MqttService.ReportedSettingsTotalTimeout;
+        MqttService.ReportedSettingsTotalTimeout = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            HttpHandler.OnPost($"{ApiBase}/api/sensors");
+            HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent,
+                delay: TimeSpan.FromSeconds(30));
+            var service = CreateService();
+            var started = DateTime.UtcNow;
+
+            await service.HandleReceivedMessage(Received(ConfigTopic, AckConfig));
+
+            Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(10),
+                "reporting settings ran past the timeout");
+        }
+        finally
+        {
+            MqttService.ReportedSettingsTotalTimeout = original;
+        }
+    }
+
+    [Fact]
+    public async Task ConfigWithSettingsFields_ReportsOnce()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, AckConfig));
+
+        Assert.Single(HttpHandler.MatchedRequests, r => r == $"POST {ReportedSettingsUrl}");
     }
 
     [Fact]

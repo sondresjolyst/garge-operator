@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace garge_operator.Models
@@ -26,6 +27,25 @@ namespace garge_operator.Models
         public int? SleepS { get; set; }
         [JsonPropertyName("security")]
         public bool? Security { get; set; }
+        // A JsonElement so the key's absence is distinguishable from a null value, and
+        // so a value of any shape parses: a malformed floor must not take the whole
+        // config down with it and leave the sensor unregistered.
+        [JsonPropertyName("floor_mv")]
+        public JsonElement FloorMv { get; set; }
+
+        /// <summary>True when the device sent a floor_mv key at all, null included.
+        /// Firmware that predates floor reporting omits it, which leaves the element
+        /// Undefined and makes the API skip the floor check.</summary>
+        [JsonIgnore]
+        public bool FloorReported => FloorMv.ValueKind != JsonValueKind.Undefined;
+
+        /// <summary>The reported floor, or null for an explicit null and for a value that
+        /// is not an int32.</summary>
+        [JsonIgnore]
+        public int? FloorMillivolts =>
+            FloorMv.ValueKind == JsonValueKind.Number && FloorMv.TryGetInt32(out var mv)
+                ? mv
+                : null;
         [JsonPropertyName("version")]
         public string? Version { get; set; }
     }

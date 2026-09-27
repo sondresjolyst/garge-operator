@@ -4,7 +4,7 @@ namespace garge_operator.Tests;
 
 public class FakeHttpMessageHandler : HttpMessageHandler
 {
-    private readonly List<(Func<HttpRequestMessage, bool> Match, HttpStatusCode Status, string Content)> _rules = new();
+    private readonly List<(Func<HttpRequestMessage, bool> Match, HttpStatusCode Status, string Content, TimeSpan Delay)> _rules = new();
 
     /// <summary>
     /// Ordered log of every request the handler matched, in "{METHOD} {url}" form. Used by tests
@@ -25,23 +25,26 @@ public class FakeHttpMessageHandler : HttpMessageHandler
     /// </summary>
     public Action<string>? OnMatched { get; set; }
 
-    public void OnGet(string url, string content, HttpStatusCode status = HttpStatusCode.OK)
-        => _rules.Add((r => r.Method == HttpMethod.Get && r.RequestUri!.ToString() == url, status, content));
+    public void OnGet(string url, string content, HttpStatusCode status = HttpStatusCode.OK, TimeSpan delay = default)
+        => _rules.Add((r => r.Method == HttpMethod.Get && r.RequestUri!.ToString() == url, status, content, delay));
 
     public void OnPatch(string url, HttpStatusCode status = HttpStatusCode.OK)
-        => _rules.Add((r => r.Method == HttpMethod.Patch && r.RequestUri!.ToString() == url, status, "ok"));
+        => _rules.Add((r => r.Method == HttpMethod.Patch && r.RequestUri!.ToString() == url, status, "ok", default));
 
-    public void OnPost(string url, string content = "ok", HttpStatusCode status = HttpStatusCode.OK)
-        => _rules.Add((r => r.Method == HttpMethod.Post && r.RequestUri!.ToString() == url, status, content));
+    /// <summary>A delay holds the response until it elapses or the request's token is
+    /// cancelled, so a test can see what a caller does about a slow API.</summary>
+    public void OnPost(string url, string content = "ok", HttpStatusCode status = HttpStatusCode.OK, TimeSpan delay = default)
+        => _rules.Add((r => r.Method == HttpMethod.Post && r.RequestUri!.ToString() == url, status, content, delay));
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        foreach (var (match, status, content) in _rules)
+        foreach (var (match, status, content, delay) in _rules)
         {
             if (match(request))
             {
                 var key = $"{request.Method} {request.RequestUri}";
                 MatchedRequests.Add(key);
+                if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
                 if (request.Content != null)
                     RequestBodies.Add((key, await request.Content.ReadAsStringAsync(cancellationToken)));
                 OnMatched?.Invoke(request.RequestUri!.ToString());
