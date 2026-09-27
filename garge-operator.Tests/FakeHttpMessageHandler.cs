@@ -13,6 +13,12 @@ public class FakeHttpMessageHandler : HttpMessageHandler
     public List<string> MatchedRequests { get; } = new();
 
     /// <summary>
+    /// Body of every matched request that carried content, keyed by the same "{METHOD} {url}" form
+    /// as <see cref="MatchedRequests"/>.
+    /// </summary>
+    public List<(string Request, string Body)> RequestBodies { get; } = new();
+
+    /// <summary>
     /// Optional sink invoked with each matched request URL. Tests can point this at the same list a
     /// mock publish callback writes to, producing a single ordered log that interleaves API calls
     /// with MQTT publishes so their relative order can be asserted.
@@ -28,20 +34,23 @@ public class FakeHttpMessageHandler : HttpMessageHandler
     public void OnPost(string url, string content = "ok", HttpStatusCode status = HttpStatusCode.OK)
         => _rules.Add((r => r.Method == HttpMethod.Post && r.RequestUri!.ToString() == url, status, content));
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         foreach (var (match, status, content) in _rules)
         {
             if (match(request))
             {
-                MatchedRequests.Add($"{request.Method} {request.RequestUri}");
+                var key = $"{request.Method} {request.RequestUri}";
+                MatchedRequests.Add(key);
+                if (request.Content != null)
+                    RequestBodies.Add((key, await request.Content.ReadAsStringAsync(cancellationToken)));
                 OnMatched?.Invoke(request.RequestUri!.ToString());
-                return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(content) });
+                return new HttpResponseMessage(status) { Content = new StringContent(content) };
             }
         }
-        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+        return new HttpResponseMessage(HttpStatusCode.NotFound)
         {
             Content = new StringContent($"No handler: {request.Method} {request.RequestUri}")
-        });
+        };
     }
 }

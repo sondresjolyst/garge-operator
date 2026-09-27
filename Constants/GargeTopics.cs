@@ -14,6 +14,9 @@ namespace garge_operator.Constants
         /// <summary>The command topic for a device, e.g. <c>garge/devices/{deviceId}/set</c>.</summary>
         public static string SetTopic(string deviceId) => $"{Prefix}{deviceId}/set";
 
+        /// <summary>The retained settings downlink for a device, e.g. <c>garge/devices/{deviceId}/settings</c>.</summary>
+        public static string SettingsTopic(string deviceId) => $"{Prefix}{deviceId}/settings";
+
         /// <summary>The wildcard subscription covering all subtopics of a device, e.g. <c>garge/devices/{deviceId}/#</c>.</summary>
         public static string DeviceWildcard(string deviceId) => $"{Prefix}{deviceId}/#";
 

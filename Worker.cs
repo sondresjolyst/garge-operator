@@ -13,6 +13,7 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IMqttService _mqttService;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly DeviceSettingsSync _deviceSettingsSync;
     private readonly string _apiBaseUrl;
 
     // Caches the last published action per switch, keyed by switch ID.
@@ -25,11 +26,13 @@ public class Worker : BackgroundService
         ILogger<Worker> logger,
         IMqttService mqttService,
         IHttpClientFactory httpClientFactory,
+        DeviceSettingsSync deviceSettingsSync,
         IOptions<ApiOptions> apiOptions)
     {
         _logger = logger;
         _mqttService = mqttService;
         _httpClientFactory = httpClientFactory;
+        _deviceSettingsSync = deviceSettingsSync;
         _apiBaseUrl = apiOptions.Value.BaseUrl;
     }
 
@@ -71,6 +74,8 @@ public class Worker : BackgroundService
     internal async Task ReconcileOnStartupAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Running startup reconciliation pass.");
+
+        await _deviceSettingsSync.RepublishAsync(stoppingToken);
 
         var (client, rules) = await FetchRulesAsync(stoppingToken);
         if (client == null || rules == null) return;
