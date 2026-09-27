@@ -28,8 +28,9 @@ namespace garge_operator.Services
         /// <summary>
         /// The reconnect handlers await this, and the shared client carries the 100 s
         /// default timeout, so an unresponsive API would stall every reconnect for that
-        /// long. Devices keep their retained settings meanwhile; a late republish costs
-        /// nothing, a blocked reconnect does.
+        /// long. Giving up loses this republish until the next startup or SignalR
+        /// reconnect, which devices ride out on their retained settings; a blocked
+        /// reconnect stops every message.
         /// </summary>
         internal static readonly TimeSpan RepublishTimeout = TimeSpan.FromSeconds(15);
 
