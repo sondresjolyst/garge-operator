@@ -46,6 +46,12 @@ namespace garge_operator.Models
             FloorMv.ValueKind == JsonValueKind.Number && FloorMv.TryGetInt32(out var mv)
                 ? mv
                 : null;
+        /// <summary>False when the device's EEPROM cannot hold the settings record, so it
+        /// drops every settings message it is sent. Absent on firmware that predates the
+        /// field.</summary>
+        [JsonPropertyName("settings_store")]
+        public bool? SettingsStore { get; set; }
+
         [JsonPropertyName("version")]
         public string? Version { get; set; }
     }

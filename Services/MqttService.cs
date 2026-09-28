@@ -467,9 +467,12 @@ namespace garge_operator.Services
                 }
 
                 // A config without sleep_s comes from firmware that takes no Garge
-                // Security settings, so it can never ack. The API needs to know that to
-                // stop offering the feature on hardware that cannot arm.
-                await SendSecurityCapabilityToApi(sensorConfig.UniqId, sensorConfig.SleepS is not null);
+                // Security settings, and settings_store false from a device whose EEPROM
+                // cannot hold them. Neither can ever ack, so the API needs to know to stop
+                // offering the feature on hardware that cannot arm.
+                await SendSecurityCapabilityToApi(
+                    sensorConfig.UniqId,
+                    sensorConfig.SleepS is not null && sensorConfig.SettingsStore != false);
 
                 if (sensorConfig.SleepS is { } sleepSeconds)
                 {
