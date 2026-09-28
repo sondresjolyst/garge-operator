@@ -54,6 +54,11 @@ namespace garge_operator.Services
         internal static readonly TimeSpan ReportedSettingsRetryDelay = TimeSpan.FromSeconds(2);
         internal static TimeSpan ReportedSettingsTotalTimeout = TimeSpan.FromSeconds(20);
 
+        // Shorter than the settings report: every config message passes through here,
+        // including ones from devices that have nothing else to send, and the answer
+        // arrives again on the next config anyway.
+        internal static TimeSpan SecurityCapabilityTimeout = TimeSpan.FromSeconds(3);
+
         internal static bool IsPreSwitchEcho(
             string incomingState,
             (string Action, DateTime SentAt)? lastCommand,
@@ -170,6 +175,9 @@ namespace garge_operator.Services
                 try
                 {
                     _logger.LogInformation("Connected to MQTT broker.");
+                    // The API may have lost these while this process was disconnected, and
+                    // the retained configs replayed on subscribe carry the answer again.
+                    _reportedCapabilities.Clear();
                     await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
                     {
                         new MqttTopicFilterBuilder().WithTopic("garge/devices/+/config").Build(),
@@ -894,7 +902,7 @@ namespace garge_operator.Services
             {
                 var client = CreateApiClient();
                 var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/security-capability";
-                using var timeout = new CancellationTokenSource(ReportedSettingsTotalTimeout);
+                using var timeout = new CancellationTokenSource(SecurityCapabilityTimeout);
                 var response = await HttpJson.PostJsonAsync(client, url, new { capable }, timeout.Token);
 
                 if (response.IsSuccessStatusCode)
@@ -904,6 +912,7 @@ namespace garge_operator.Services
                     return;
                 }
 
+                // Nothing is cached on a failure, so the next config message tries again.
                 _logger.LogWarning("Failed to report Garge Security capability for sensor {UniqId}. Status code: {StatusCode}.", uniqId, response.StatusCode);
             }
             catch (Exception ex)

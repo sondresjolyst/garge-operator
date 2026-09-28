@@ -192,6 +192,22 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
         Assert.Single(HttpHandler.MatchedRequests, r => r == $"POST {CapabilityUrl}");
     }
 
+    // A capability the API did not record must not be cached as sent, or the sensor stays
+    // unknown to it until this process restarts.
+    [Fact]
+    public async Task Config_WhenTheCapabilityPostFails_TriesAgainOnTheNextConfig()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent);
+        HttpHandler.OnPost(CapabilityUrl, status: HttpStatusCode.InternalServerError);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, LegacyConfig));
+        await service.HandleReceivedMessage(Received(ConfigTopic, LegacyConfig));
+
+        Assert.Equal(2, HttpHandler.MatchedRequests.Count(r => r == $"POST {CapabilityUrl}"));
+    }
+
     [Fact]
     public async Task RetainedConfigWithSettingsFields_RegistersSensor_PostsNoReportedSettings()
     {
