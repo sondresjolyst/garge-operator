@@ -10,6 +10,7 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
     private const string UniqId = "garge_0a1b2c3d4e5f_voltage";
     private const string ConfigTopic = "garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/config";
     private const string ReportedSettingsUrl = $"{ApiBase}/api/sensors/name/{UniqId}/reported-settings";
+    private const string CapabilityUrl = $"{ApiBase}/api/sensors/name/{UniqId}/security-capability";
 
     private const string LegacyConfig =
         """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.14.0"}""";
@@ -155,6 +156,40 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
         await service.HandleReceivedMessage(Received(ConfigTopic, AckConfig));
 
         Assert.Single(HttpHandler.MatchedRequests, r => r == $"POST {ReportedSettingsUrl}");
+    }
+
+    // Firmware that takes no settings never acks, so the API has to learn from the
+    // config itself that this hardware can never arm.
+    [Theory]
+    [InlineData(LegacyConfig, false)]
+    [InlineData(AckConfig, true)]
+    public async Task Config_ReportsWhetherTheDeviceTakesSettings(string payload, bool capable)
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent);
+        HttpHandler.OnPost(CapabilityUrl, status: HttpStatusCode.NoContent);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, payload));
+
+        var (_, body) = Assert.Single(HttpHandler.RequestBodies, r => r.Request == $"POST {CapabilityUrl}");
+        Assert.Equal($"{{\"capable\":{capable.ToString().ToLowerInvariant()}}}", body);
+    }
+
+    // Every config carries it, so an unchanged answer must not become an API call per
+    // message.
+    [Fact]
+    public async Task Config_ReportsTheCapabilityOnlyWhenItChanges()
+    {
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(ReportedSettingsUrl, status: HttpStatusCode.NoContent);
+        HttpHandler.OnPost(CapabilityUrl, status: HttpStatusCode.NoContent);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(ConfigTopic, LegacyConfig));
+        await service.HandleReceivedMessage(Received(ConfigTopic, LegacyConfig));
+
+        Assert.Single(HttpHandler.MatchedRequests, r => r == $"POST {CapabilityUrl}");
     }
 
     [Fact]
