@@ -1,4 +1,5 @@
 using MQTTnet;
+using System.Collections.Concurrent;
 using MQTTnet.Client;
 using MQTTnet.Extensions.ManagedClient;
 using System.Text;
@@ -52,6 +53,11 @@ namespace garge_operator.Services
         internal const int ReportedSettingsMaxRetries = 2;
         internal static readonly TimeSpan ReportedSettingsRetryDelay = TimeSpan.FromSeconds(2);
         internal static TimeSpan ReportedSettingsTotalTimeout = TimeSpan.FromSeconds(20);
+
+        // Shorter than the settings report: every config message passes through here,
+        // including ones from devices that have nothing else to send, and the answer
+        // arrives again on the next config anyway.
+        internal static TimeSpan SecurityCapabilityTimeout = TimeSpan.FromSeconds(3);
 
         internal static bool IsPreSwitchEcho(
             string incomingState,
@@ -442,6 +448,8 @@ namespace garge_operator.Services
                         {
                             _sensors.Add(createSensorData);
                         }
+                        // A new row carries no capability, whatever this process last sent.
+                        _reportedCapabilities.TryRemove(sensorConfig.UniqId, out _);
                     }
                 }
 
@@ -455,6 +463,18 @@ namespace garge_operator.Services
                 lock (_listsLock)
                 {
                     _logger.LogDebug("Current uniq_id keys: {Keys}", string.Join(", ", _sensorUniqIds.Keys));
+                }
+
+                // A config without sleep_s comes from firmware that takes no Garge
+                // Security settings, and settings_store false from a device whose EEPROM
+                // cannot hold them. Neither can ever ack, so the API needs to know to stop
+                // offering the feature on hardware that cannot arm. Only battery sensors
+                // are ever offered it.
+                if (string.Equals(sensorConfig.DevCla, SensorTypes.Voltage, StringComparison.OrdinalIgnoreCase))
+                {
+                    await SendSecurityCapabilityToApi(
+                        sensorConfig.UniqId,
+                        sensorConfig.SleepS is not null && sensorConfig.SettingsStore != false);
                 }
 
                 if (sensorConfig.SleepS is { } sleepSeconds)
@@ -873,6 +893,41 @@ namespace garge_operator.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error sending data to API.");
+            }
+        }
+
+        // Every config message carries this, so it is only sent when the answer changes:
+        // for most devices that is once per process.
+        private readonly ConcurrentDictionary<string, bool> _reportedCapabilities = new();
+
+        private async Task SendSecurityCapabilityToApi(string uniqId, bool capable)
+        {
+            if (_reportedCapabilities.TryGetValue(uniqId, out var sent) && sent == capable) return;
+
+            try
+            {
+                var client = CreateApiClient();
+                var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/security-capability";
+                using var timeout = new CancellationTokenSource(SecurityCapabilityTimeout);
+                using var response = await HttpJson.PostJsonAsync(client, url, new { capable }, timeout.Token);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _reportedCapabilities[uniqId] = capable;
+                    _logger.LogInformation("Reported Garge Security capability for sensor {UniqId}: {Capable}.", uniqId, capable);
+                    return;
+                }
+
+                // Nothing is cached on a failure, so the next config message tries again.
+                _logger.LogWarning("Failed to report Garge Security capability for sensor {UniqId}. Status code: {StatusCode}.", uniqId, response.StatusCode);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Reporting Garge Security capability for sensor {UniqId} gave up after {Timeout}.", uniqId, SecurityCapabilityTimeout);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reporting Garge Security capability for sensor {UniqId}.", uniqId);
             }
         }
 
