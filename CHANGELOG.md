@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/sondresjolyst/garge-operator/compare/v1.10.0...v1.11.0) (2026-09-28)
+
+
+### Features
+
+* tell the API whether a device takes Garge Security settings ([#224](https://github.com/sondresjolyst/garge-operator/issues/224)) ([7aae055](https://github.com/sondresjolyst/garge-operator/commit/7aae055d59b7e7d5963fd04eb2666927c7bb9682))
+
 ## [1.10.0](https://github.com/sondresjolyst/garge-operator/compare/v1.9.5...v1.10.0) (2026-09-27)
 
 
