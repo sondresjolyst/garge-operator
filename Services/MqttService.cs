@@ -175,9 +175,6 @@ namespace garge_operator.Services
                 try
                 {
                     _logger.LogInformation("Connected to MQTT broker.");
-                    // The API may have lost these while this process was disconnected, and
-                    // the retained configs replayed on subscribe carry the answer again.
-                    _reportedCapabilities.Clear();
                     await _mqttClient.SubscribeAsync(new List<MqttTopicFilter>
                     {
                         new MqttTopicFilterBuilder().WithTopic("garge/devices/+/config").Build(),
@@ -451,6 +448,8 @@ namespace garge_operator.Services
                         {
                             _sensors.Add(createSensorData);
                         }
+                        // A new row carries no capability, whatever this process last sent.
+                        _reportedCapabilities.TryRemove(sensorConfig.UniqId, out _);
                     }
                 }
 
@@ -469,10 +468,14 @@ namespace garge_operator.Services
                 // A config without sleep_s comes from firmware that takes no Garge
                 // Security settings, and settings_store false from a device whose EEPROM
                 // cannot hold them. Neither can ever ack, so the API needs to know to stop
-                // offering the feature on hardware that cannot arm.
-                await SendSecurityCapabilityToApi(
-                    sensorConfig.UniqId,
-                    sensorConfig.SleepS is not null && sensorConfig.SettingsStore != false);
+                // offering the feature on hardware that cannot arm. Only battery sensors
+                // are ever offered it.
+                if (string.Equals(sensorConfig.DevCla, SensorTypes.Voltage, StringComparison.OrdinalIgnoreCase))
+                {
+                    await SendSecurityCapabilityToApi(
+                        sensorConfig.UniqId,
+                        sensorConfig.SleepS is not null && sensorConfig.SettingsStore != false);
+                }
 
                 if (sensorConfig.SleepS is { } sleepSeconds)
                 {
@@ -906,7 +909,7 @@ namespace garge_operator.Services
                 var client = CreateApiClient();
                 var url = $"{_apiBaseUrl}/api/sensors/name/{Uri.EscapeDataString(uniqId)}/security-capability";
                 using var timeout = new CancellationTokenSource(SecurityCapabilityTimeout);
-                var response = await HttpJson.PostJsonAsync(client, url, new { capable }, timeout.Token);
+                using var response = await HttpJson.PostJsonAsync(client, url, new { capable }, timeout.Token);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -917,6 +920,10 @@ namespace garge_operator.Services
 
                 // Nothing is cached on a failure, so the next config message tries again.
                 _logger.LogWarning("Failed to report Garge Security capability for sensor {UniqId}. Status code: {StatusCode}.", uniqId, response.StatusCode);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Reporting Garge Security capability for sensor {UniqId} gave up after {Timeout}.", uniqId, SecurityCapabilityTimeout);
             }
             catch (Exception ex)
             {

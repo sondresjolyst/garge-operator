@@ -27,6 +27,9 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
     private const string AckConfigWithAStringFloor =
         """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.15.0","sleep_s":600,"security":true,"floor_mv":"12550"}""";
 
+    private const string TemperatureConfig =
+        """{"name":"Garge 0a1b2c3d4e5f temperature","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_temperature/state","unit_of_meas":"°C","dev_cla":"temperature","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_temperature","val_tpl":"{{ value_json.temperature }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.15.0"}""";
+
     private const string AckConfigWithNoSettingsStore =
         """{"name":"Garge 0a1b2c3d4e5f voltage","stat_cla":"measurement","stat_t":"garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_voltage/state","unit_of_meas":"V","dev_cla":"voltage","frc_upd":true,"uniq_id":"garge_0a1b2c3d4e5f_voltage","val_tpl":"{{ value_json.value }}","parent_name":"garge_0a1b2c3d4e5f","version":"v1.15.0","sleep_s":3600,"security":false,"settings_store":false,"floor_mv":null}""";
 
@@ -180,6 +183,22 @@ public class MqttServiceSensorConfigTests : MqttServiceTestBase
 
         var (_, body) = Assert.Single(HttpHandler.RequestBodies, r => r.Request == $"POST {CapabilityUrl}");
         Assert.Equal($"{{\"capable\":{capable.ToString().ToLowerInvariant()}}}", body);
+    }
+
+    // Garge Security is only ever offered on battery sensors, so nothing else needs to
+    // report a capability.
+    [Fact]
+    public async Task ConfigForANonVoltageSensor_ReportsNoCapability()
+    {
+        const string temperatureUrl = $"{ApiBase}/api/sensors/name/garge_0a1b2c3d4e5f_temperature/security-capability";
+        HttpHandler.OnPost($"{ApiBase}/api/sensors");
+        HttpHandler.OnPost(temperatureUrl, status: HttpStatusCode.NoContent);
+        var service = CreateService();
+
+        await service.HandleReceivedMessage(Received(
+            "garge/devices/garge_0a1b2c3d4e5f/garge_0a1b2c3d4e5f_temperature/config", TemperatureConfig));
+
+        Assert.DoesNotContain($"POST {temperatureUrl}", HttpHandler.MatchedRequests);
     }
 
     // Every config carries it, so an unchanged answer must not become an API call per
