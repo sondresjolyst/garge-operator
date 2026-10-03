@@ -94,6 +94,88 @@ public class WorkerDeviceCommandTests : WorkerTestBase
     }
 
     [Fact]
+    public async Task AttemptCountFailing_StillLeavesTheCommandPublished()
+    {
+        MockMqtt.Setup(m => m.GetJwtTokenAsync()).ReturnsAsync("token");
+        HttpHandler.OnGet($"{ApiBase}/api/mqtt/devices/pending-commands", JsonSerializer.Serialize(new[] { Pending() }));
+        HttpHandler.OnPost($"{ApiBase}/api/mqtt/devices/{Uri.EscapeDataString(Target)}/command-attempt",
+            "", System.Net.HttpStatusCode.InternalServerError);
+        var worker = CreateWorker();
+
+        await worker.ReconcileDeviceCommandsAsync(CancellationToken.None);
+
+        // Not counting the attempt is better than leaving the device in the wrong state.
+        MockMqtt.Verify(m => m.PublishSwitchDataAsync($"garge/devices/{Target}/set", "ON", true), Times.Once);
+    }
+
+    [Fact]
+    public async Task OneFailingCommand_DoesNotStopTheRest()
+    {
+        var second = "wiz_SOCKET_aaaaaaaaaaaa";
+        MockMqtt.Setup(m => m.GetJwtTokenAsync()).ReturnsAsync("token");
+        HttpHandler.OnGet($"{ApiBase}/api/mqtt/devices/pending-commands", JsonSerializer.Serialize(new[]
+        {
+            Pending(),
+            new PendingDeviceCommand
+            {
+                Target = second, DesiredState = "OFF", ControllerDeviceName = Controller, DesiredStateAt = DateTime.UtcNow
+            }
+        }));
+        HttpHandler.OnPost($"{ApiBase}/api/mqtt/devices/{Uri.EscapeDataString(Target)}/command-attempt");
+        HttpHandler.OnPost($"{ApiBase}/api/mqtt/devices/{Uri.EscapeDataString(second)}/command-attempt");
+        MockMqtt.Setup(m => m.PublishSwitchDataAsync($"garge/devices/{Target}/set", "ON", true))
+            .ThrowsAsync(new InvalidOperationException("broker unreachable"));
+        var worker = CreateWorker();
+
+        await worker.ReconcileDeviceCommandsAsync(CancellationToken.None);
+
+        // One unreachable device must not hold the others until the next pass.
+        MockMqtt.Verify(m => m.PublishSwitchDataAsync($"garge/devices/{second}/set", "OFF", true), Times.Once);
+    }
+
+    [Fact]
+    public async Task MalformedPendingList_PublishesNothing()
+    {
+        MockMqtt.Setup(m => m.GetJwtTokenAsync()).ReturnsAsync("token");
+        HttpHandler.OnGet($"{ApiBase}/api/mqtt/devices/pending-commands", "{not json");
+        var worker = CreateWorker();
+
+        await worker.ReconcileDeviceCommandsAsync(CancellationToken.None);
+
+        MockMqtt.Verify(m => m.PublishSwitchDataAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ControlLists_ArePublishedPerGateway()
+    {
+        MockMqtt.Setup(m => m.GetJwtTokenAsync()).ReturnsAsync("token");
+        HttpHandler.OnGet($"{ApiBase}/api/mqtt/devices/controls", JsonSerializer.Serialize(new[]
+        {
+            new { GatewayDeviceName = Controller, Targets = new[] { Target } },
+            new { GatewayDeviceName = "garge_ffffffffffff", Targets = Array.Empty<string>() }
+        }));
+        var worker = CreateWorker();
+
+        await worker.PublishDeviceControlsAsync(CancellationToken.None);
+
+        MockMqtt.Verify(m => m.PublishDeviceControlsAsync(Controller, It.Is<IReadOnlyList<string>>(t => t.Count == 1 && t[0] == Target)), Times.Once);
+        // An empty list is still published: it is how a standby learns it controls nothing.
+        MockMqtt.Verify(m => m.PublishDeviceControlsAsync("garge_ffffffffffff", It.Is<IReadOnlyList<string>>(t => t.Count == 0)), Times.Once);
+    }
+
+    [Fact]
+    public async Task UnreadableControlLists_PublishNothing()
+    {
+        MockMqtt.Setup(m => m.GetJwtTokenAsync()).ReturnsAsync("token");
+        HttpHandler.OnGet($"{ApiBase}/api/mqtt/devices/controls", "", System.Net.HttpStatusCode.BadGateway);
+        var worker = CreateWorker();
+
+        await worker.PublishDeviceControlsAsync(CancellationToken.None);
+
+        MockMqtt.Verify(m => m.PublishDeviceControlsAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()), Times.Never);
+    }
+
+    [Fact]
     public async Task EachOutstandingCommand_CountsOneAttempt()
     {
         var attempts = 0;

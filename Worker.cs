@@ -17,6 +17,13 @@ public class Worker : BackgroundService
     private readonly DeviceSettingsSync _deviceSettingsSync;
     private readonly string _apiBaseUrl;
 
+    /// <summary>
+    /// How many outstanding commands one pass redelivers. The pass shares its tick with the
+    /// automation poll, so a backlog is worked through over several passes rather than all at
+    /// once.
+    /// </summary>
+    internal const int MaxCommandsPerPass = 50;
+
     // Caches the last published action per switch, keyed by switch ID.
     private readonly Dictionary<int, string> _lastPublishedActions = new();
 
@@ -104,7 +111,17 @@ public class Worker : BackgroundService
         }
 
         var body = await response.Content.ReadAsStringAsync(stoppingToken);
-        var lists = JsonSerializer.Deserialize<List<DeviceControlList>>(body, JsonOptions) ?? [];
+
+        List<DeviceControlList> lists;
+        try
+        {
+            lists = JsonSerializer.Deserialize<List<DeviceControlList>>(body, JsonOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Could not read the device control lists.");
+            return;
+        }
 
         foreach (var list in lists)
         {
@@ -131,7 +148,27 @@ public class Worker : BackgroundService
         }
 
         var body = await response.Content.ReadAsStringAsync(stoppingToken);
-        var pending = JsonSerializer.Deserialize<List<PendingDeviceCommand>>(body, JsonOptions) ?? [];
+
+        List<PendingDeviceCommand> pending;
+        try
+        {
+            pending = JsonSerializer.Deserialize<List<PendingDeviceCommand>>(body, JsonOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Could not read the pending device command list.");
+            return;
+        }
+
+        if (pending.Count > MaxCommandsPerPass)
+        {
+            // One pass must not crowd out the automation poll on the same tick. The rest keep
+            // their place and are picked up next time, oldest first.
+            _logger.LogWarning(
+                "{Count} commands outstanding, redelivering the oldest {Limit} this pass.",
+                pending.Count, MaxCommandsPerPass);
+            pending = pending.Take(MaxCommandsPerPass).ToList();
+        }
 
         foreach (var command in pending)
         {
@@ -145,16 +182,36 @@ public class Worker : BackgroundService
                 continue;
             }
 
-            await _mqttService.PublishSwitchDataAsync(
-                GargeTopics.SetTopic(command.Target), command.DesiredState, force: true);
+            // Per command, so one unreachable device does not hold up the others until the
+            // next pass.
+            try
+            {
+                await _mqttService.PublishSwitchDataAsync(
+                    GargeTopics.SetTopic(command.Target), command.DesiredState, force: true);
 
-            await HttpJson.PostJsonAsync(
-                client, $"{_apiBaseUrl}/api/mqtt/devices/{Uri.EscapeDataString(command.Target)}/command-attempt",
-                new { }, stoppingToken);
+                var attempt = await HttpJson.PostJsonAsync(
+                    client, $"{_apiBaseUrl}/api/mqtt/devices/{Uri.EscapeDataString(command.Target)}/command-attempt",
+                    new { }, stoppingToken);
 
-            _logger.LogInformation(
-                "Redelivered command {DesiredState} for {Target} (attempt {Attempts}, observed {ObservedState}).",
-                command.DesiredState, command.Target, command.Attempts + 1, command.ObservedState ?? "unknown");
+                if (!attempt.IsSuccessStatusCode)
+                {
+                    // The command was published but the count did not move, so it can be
+                    // redelivered more times than the limit allows. Said out loud because the
+                    // alternative, not publishing, leaves the device wrong.
+                    _logger.LogWarning(
+                        "Redelivered command for {Target} but could not count the attempt: StatusCode={StatusCode}",
+                        command.Target, attempt.StatusCode);
+                    continue;
+                }
+
+                _logger.LogInformation(
+                    "Redelivered command {DesiredState} for {Target} (attempt {Attempts}, observed {ObservedState}).",
+                    command.DesiredState, command.Target, command.Attempts + 1, command.ObservedState ?? "unknown");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error redelivering command for {Target}.", command.Target);
+            }
         }
     }
 
