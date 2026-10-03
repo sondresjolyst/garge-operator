@@ -1,6 +1,7 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using garge_operator.Services;
 using garge_operator.Dtos.Automation;
+using garge_operator.Dtos.Mqtt;
 using garge_operator.Constants;
 using garge_operator.Models;
 using Microsoft.Extensions.Options;
@@ -15,6 +16,13 @@ public class Worker : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly DeviceSettingsSync _deviceSettingsSync;
     private readonly string _apiBaseUrl;
+
+    /// <summary>
+    /// How many outstanding commands one pass redelivers. The pass shares its tick with the
+    /// automation poll, so a backlog is worked through over several passes rather than all at
+    /// once.
+    /// </summary>
+    internal const int MaxCommandsPerPass = 50;
 
     // Caches the last published action per switch, keyed by switch ID.
     private readonly Dictionary<int, string> _lastPublishedActions = new();
@@ -63,6 +71,146 @@ public class Worker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during automation polling.");
+            }
+
+            try
+            {
+                await PublishDeviceControlsAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error publishing device control lists.");
+            }
+
+            try
+            {
+                await ReconcileDeviceCommandsAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during device command reconciliation.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tells each gateway which targets it currently holds the lease for. Several gateways can
+    /// see the same device, so without this every one of them would answer its commands and
+    /// publish its state; a gateway absent from its own list stays a standby, still reporting the
+    /// device so it can take over later.
+    /// </summary>
+    internal async Task PublishDeviceControlsAsync(CancellationToken stoppingToken)
+    {
+        var client = _httpClientFactory.CreateClient(GargeApiClient.Authorized);
+
+        var response = await client.GetAsync($"{_apiBaseUrl}/api/mqtt/devices/controls", stoppingToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Could not read device control lists: StatusCode={StatusCode}", response.StatusCode);
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(stoppingToken);
+
+        List<DeviceControlList> lists;
+        try
+        {
+            lists = JsonSerializer.Deserialize<List<DeviceControlList>>(body, JsonOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Could not read the device control lists.");
+            return;
+        }
+
+        foreach (var list in lists)
+        {
+            await _mqttService.PublishDeviceControlsAsync(list.GatewayDeviceName, list.Targets);
+        }
+    }
+
+    /// <summary>
+    /// Redelivers commands a device has not been seen to carry out. A command on a device's set
+    /// topic is unretained, so one published while no gateway held that device's lease reached
+    /// nobody and left no trace. The API keeps the wanted state, the state the device was last
+    /// seen in, and a count of deliveries, so each pass republishes the ones still outstanding and
+    /// stops once the device agrees or the count runs out.
+    /// </summary>
+    internal async Task ReconcileDeviceCommandsAsync(CancellationToken stoppingToken)
+    {
+        var client = _httpClientFactory.CreateClient(GargeApiClient.Authorized);
+
+        var response = await client.GetAsync($"{_apiBaseUrl}/api/mqtt/devices/pending-commands", stoppingToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Could not read pending device commands: StatusCode={StatusCode}", response.StatusCode);
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(stoppingToken);
+
+        List<PendingDeviceCommand> pending;
+        try
+        {
+            pending = JsonSerializer.Deserialize<List<PendingDeviceCommand>>(body, JsonOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Could not read the pending device command list.");
+            return;
+        }
+
+        if (pending.Count > MaxCommandsPerPass)
+        {
+            // One pass must not crowd out the automation poll on the same tick. The rest keep
+            // their place and are picked up next time, oldest first.
+            _logger.LogWarning(
+                "{Count} commands outstanding, redelivering the oldest {Limit} this pass.",
+                pending.Count, MaxCommandsPerPass);
+            pending = pending.Take(MaxCommandsPerPass).ToList();
+        }
+
+        foreach (var command in pending)
+        {
+            if (string.IsNullOrEmpty(command.ControllerDeviceName))
+            {
+                // Nobody holds the lease, so publishing would reach no subscriber. The command
+                // keeps its place until a gateway takes the device over.
+                _logger.LogInformation(
+                    "Holding command {DesiredState} for {Target}: no gateway holds its lease.",
+                    command.DesiredState, command.Target);
+                continue;
+            }
+
+            // Per command, so one unreachable device does not hold up the others until the
+            // next pass.
+            try
+            {
+                await _mqttService.PublishSwitchDataAsync(
+                    GargeTopics.SetTopic(command.Target), command.DesiredState, force: true);
+
+                var attempt = await HttpJson.PostJsonAsync(
+                    client, $"{_apiBaseUrl}/api/mqtt/devices/{Uri.EscapeDataString(command.Target)}/command-attempt",
+                    new { }, stoppingToken);
+
+                if (!attempt.IsSuccessStatusCode)
+                {
+                    // The command was published but the count did not move, so it can be
+                    // redelivered more times than the limit allows. Said out loud because the
+                    // alternative, not publishing, leaves the device wrong.
+                    _logger.LogWarning(
+                        "Redelivered command for {Target} but could not count the attempt: StatusCode={StatusCode}",
+                        command.Target, attempt.StatusCode);
+                    continue;
+                }
+
+                _logger.LogInformation(
+                    "Redelivered command {DesiredState} for {Target} (attempt {Attempts}, observed {ObservedState}).",
+                    command.DesiredState, command.Target, command.Attempts + 1, command.ObservedState ?? "unknown");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error redelivering command for {Target}.", command.Target);
             }
         }
     }

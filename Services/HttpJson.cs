@@ -22,5 +22,13 @@ namespace garge_operator.Services
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             return client.PostAsync(url, content, cancellationToken);
         }
+
+        public static Task<HttpResponseMessage> PutJsonAsync<T>(
+            HttpClient client, string url, T body, CancellationToken cancellationToken = default)
+        {
+            var json = JsonSerializer.Serialize(body, JsonOptions);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            return client.PutAsync(url, content, cancellationToken);
+        }
     }
 }
