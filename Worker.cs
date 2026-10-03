@@ -1,6 +1,7 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using garge_operator.Services;
 using garge_operator.Dtos.Automation;
+using garge_operator.Dtos.Mqtt;
 using garge_operator.Constants;
 using garge_operator.Models;
 using Microsoft.Extensions.Options;
@@ -64,6 +65,61 @@ public class Worker : BackgroundService
             {
                 _logger.LogError(ex, "Error during automation polling.");
             }
+
+            try
+            {
+                await ReconcileDeviceCommandsAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during device command reconciliation.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Redelivers commands a device has not been seen to carry out. A command on a device's set
+    /// topic is unretained, so one published while no gateway held that device's lease reached
+    /// nobody and left no trace. The API keeps the wanted state, the state the device was last
+    /// seen in, and a count of deliveries, so each pass republishes the ones still outstanding and
+    /// stops once the device agrees or the count runs out.
+    /// </summary>
+    internal async Task ReconcileDeviceCommandsAsync(CancellationToken stoppingToken)
+    {
+        var client = _httpClientFactory.CreateClient(GargeApiClient.Authorized);
+
+        var response = await client.GetAsync($"{_apiBaseUrl}/api/mqtt/devices/pending-commands", stoppingToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Could not read pending device commands: StatusCode={StatusCode}", response.StatusCode);
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(stoppingToken);
+        var pending = JsonSerializer.Deserialize<List<PendingDeviceCommand>>(body, JsonOptions) ?? [];
+
+        foreach (var command in pending)
+        {
+            if (string.IsNullOrEmpty(command.ControllerDeviceName))
+            {
+                // Nobody holds the lease, so publishing would reach no subscriber. The command
+                // keeps its place until a gateway takes the device over.
+                _logger.LogInformation(
+                    "Holding command {DesiredState} for {Target}: no gateway holds its lease.",
+                    command.DesiredState, command.Target);
+                continue;
+            }
+
+            await _mqttService.PublishSwitchDataAsync(
+                GargeTopics.SetTopic(command.Target), command.DesiredState, force: true);
+
+            await HttpJson.PostJsonAsync(
+                client, $"{_apiBaseUrl}/api/mqtt/devices/{Uri.EscapeDataString(command.Target)}/command-attempt",
+                new { }, stoppingToken);
+
+            _logger.LogInformation(
+                "Redelivered command {DesiredState} for {Target} (attempt {Attempts}, observed {ObservedState}).",
+                command.DesiredState, command.Target, command.Attempts + 1, command.ObservedState ?? "unknown");
         }
     }
 

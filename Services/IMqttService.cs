@@ -1,4 +1,4 @@
-namespace garge_operator.Services;
+﻿namespace garge_operator.Services;
 
 public interface IMqttService
 {
@@ -10,4 +10,11 @@ public interface IMqttService
     Task HandleSwitchEventAsync(SwitchEvent evt);
     Task HandleDeviceSettingsEventAsync(DeviceSettingsEvent evt);
     Task PublishSwitchDataAsync(string topic, string payload);
+
+    /// <summary>
+    /// Publishes a command to a device's set topic, optionally forcing a publish the unchanged
+    /// state check would otherwise skip. A redelivery needs that: the earlier publish may have
+    /// reached nobody.
+    /// </summary>
+    Task PublishSwitchDataAsync(string topic, string payload, bool force);
 }

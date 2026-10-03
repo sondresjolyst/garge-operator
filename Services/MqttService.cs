@@ -1,4 +1,4 @@
-using MQTTnet;
+﻿using MQTTnet;
 using System.Collections.Concurrent;
 using MQTTnet.Client;
 using MQTTnet.Extensions.ManagedClient;
@@ -243,7 +243,9 @@ namespace garge_operator.Services
 
                 _logger.LogInformation("Handling discovery event for topic {Topic}", topic);
 
-                await GrantDeviceControlAsync(devicePayload.DiscoveredBy, devicePayload.Target);
+                // The ACL rows for the target are granted by the API when it accepts the
+                // discovery, which only does so for the gateway holding that device's lease.
+                // Granting them from here would hand them to every gateway that sees the device.
                 await PostDiscoveredDevice(devicePayload);
             }
             catch (Exception ex)
@@ -354,6 +356,12 @@ namespace garge_operator.Services
                             }
 
                             await SendSwitchDataToApi(entity, "state", normalizedState);
+
+                            // The controlling gateway reports this from the device's own push, so
+                            // it is the device's state rather than anything a gateway believes,
+                            // and it is what settles an outstanding command.
+                            await ReportObservedStateAsync(entity, normalizedState);
+
                             lock (_stateLock)
                             {
                                 _lastPublishedSwitchStates[entity] = normalizedState;
@@ -683,49 +691,30 @@ namespace garge_operator.Services
         // by BearerTokenHandler, so call sites no longer fetch tokens or set headers themselves.
         private HttpClient CreateApiClient() => _httpClientFactory.CreateClient(GargeApiClient.Authorized);
 
-        private async Task<bool> GrantDeviceControlAsync(string granteeDeviceId, string targetDeviceId)
+        /// <summary>
+        /// Tells the API what state a device was last seen in, which settles a command waiting on
+        /// it. A device with no outstanding command answers 204 and nothing is recorded.
+        /// </summary>
+        private async Task ReportObservedStateAsync(string target, string state)
         {
             try
             {
                 var client = CreateApiClient();
+                var response = await HttpJson.PutJsonAsync(
+                    client, $"{_apiBaseUrl}/api/mqtt/devices/{Uri.EscapeDataString(target)}/observed-state",
+                    new { State = state });
 
-                var topic = GargeTopics.DeviceWildcard(targetDeviceId);
-                bool allSucceeded = true;
-
-                _logger.LogInformation("Granting publish rights for {GranteeDeviceId} to topic {Topic}...", granteeDeviceId, topic);
-
-                foreach (var retain in new[] { false, true })
+                if (!response.IsSuccessStatusCode)
                 {
-                    var aclPayload = new
-                    {
-                        Username = granteeDeviceId,
-                        Permission = "allow",
-                        Action = "all",
-                        Topic = topic,
-                        Qos = 0,
-                        Retain = retain ? 1 : 0
-                    };
-
-                    var response = await HttpJson.PostJsonAsync(client, $"{_apiBaseUrl}/api/mqtt/acl", aclPayload);
-
-                    if (response.IsSuccessStatusCode)
-                    {
-                        _logger.LogInformation("Granted publish rights for {GranteeDeviceId} to topic {Topic} (retain={Retain}).", granteeDeviceId, topic, retain);
-                    }
-                    else
-                    {
-                        var error = await response.Content.ReadAsStringAsync();
-                        _logger.LogError("Failed to grant ACL for {GranteeDeviceId} to topic {Topic} (retain={Retain}): StatusCode={StatusCode}, Response={Error}", granteeDeviceId, topic, retain, response.StatusCode, error);
-                        allSucceeded = false;
-                    }
+                    _logger.LogWarning("Failed to report observed state for {Target}: StatusCode={StatusCode}",
+                        target, response.StatusCode);
                 }
-
-                return allSucceeded;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error granting device control ACL.");
-                return false;
+                // Reporting is best effort: the reconcile pass retries the command, and the next
+                // state message reports again.
+                _logger.LogWarning(ex, "Error reporting observed state for {Target}.", target);
             }
         }
 
@@ -1024,7 +1013,16 @@ namespace garge_operator.Services
         /// </summary>
         public Task<string> GetJwtTokenAsync() => _tokenProvider.GetJwtTokenAsync();
 
-        public async Task PublishSwitchDataAsync(string topic, string payload)
+        public Task PublishSwitchDataAsync(string topic, string payload) =>
+            PublishSwitchDataAsync(topic, payload, force: false);
+
+        /// <summary>
+        /// Publishes a command to a device's set topic. <paramref name="force"/> publishes even
+        /// when the state is already the last one sent, which is what a redelivery needs: an
+        /// unretained QoS command published while no gateway held the device's lease reached
+        /// nobody, so the state it believes it sent never arrived.
+        /// </summary>
+        public async Task PublishSwitchDataAsync(string topic, string payload, bool force)
         {
             try
             {
@@ -1035,7 +1033,8 @@ namespace garge_operator.Services
                     : topic.Split('/')[2];
                 lock (_stateLock)
                 {
-                    if (_lastPublishedSwitchStates.TryGetValue(switchNameForPublish, out var currentState) &&
+                    if (!force &&
+                        _lastPublishedSwitchStates.TryGetValue(switchNameForPublish, out var currentState) &&
                         string.Equals(currentState, normalizedPayload, StringComparison.Ordinal))
                     {
                         var sanitizedPayload = normalizedPayload.Replace("\r", "").Replace("\n", "");
@@ -1049,11 +1048,15 @@ namespace garge_operator.Services
 
                 var messagePayload = normalizedPayload;
 
+                // Deliberately not retained. A retained command is replayed to every new
+                // subscriber, so a gateway that reconnects, or one newly promoted to a device's
+                // lease, would be handed the last command the moment it subscribes and switch the
+                // device on its own. Outstanding commands are redelivered from the recorded
+                // desired state instead.
                 var message = new MqttApplicationMessageBuilder()
                     .WithTopic(topic)
                     .WithPayload(messagePayload)
                     .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
-                    .WithRetainFlag()
                     .Build();
 
                 await _mqttClient.EnqueueAsync(message);
