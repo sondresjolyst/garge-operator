@@ -68,12 +68,47 @@ public class Worker : BackgroundService
 
             try
             {
+                await PublishDeviceControlsAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error publishing device control lists.");
+            }
+
+            try
+            {
                 await ReconcileDeviceCommandsAsync(stoppingToken);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during device command reconciliation.");
             }
+        }
+    }
+
+    /// <summary>
+    /// Tells each gateway which targets it currently holds the lease for. Several gateways can
+    /// see the same device, so without this every one of them would answer its commands and
+    /// publish its state; a gateway absent from its own list stays a standby, still reporting the
+    /// device so it can take over later.
+    /// </summary>
+    internal async Task PublishDeviceControlsAsync(CancellationToken stoppingToken)
+    {
+        var client = _httpClientFactory.CreateClient(GargeApiClient.Authorized);
+
+        var response = await client.GetAsync($"{_apiBaseUrl}/api/mqtt/devices/controls", stoppingToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Could not read device control lists: StatusCode={StatusCode}", response.StatusCode);
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(stoppingToken);
+        var lists = JsonSerializer.Deserialize<List<DeviceControlList>>(body, JsonOptions) ?? [];
+
+        foreach (var list in lists)
+        {
+            await _mqttService.PublishDeviceControlsAsync(list.GatewayDeviceName, list.Targets);
         }
     }
 

@@ -1,4 +1,4 @@
-namespace garge_operator.Constants
+﻿namespace garge_operator.Constants
 {
     /// <summary>
     /// Centralizes construction and parsing of the custom garge MQTT topic scheme.
@@ -16,6 +16,12 @@ namespace garge_operator.Constants
 
         /// <summary>The retained settings downlink for a device, e.g. <c>garge/devices/{deviceId}/settings</c>.</summary>
         public static string SettingsTopic(string deviceId) => $"{Prefix}{deviceId}/settings";
+
+        /// <summary>
+        /// The targets a gateway may act on. Inside the gateway's own prefix, which it can always
+        /// read, so the list reaches a gateway that holds no device leases at all.
+        /// </summary>
+        public static string ControlsTopic(string deviceId) => $"{Prefix}{deviceId}/controls";
 
         /// <summary>The wildcard subscription covering all subtopics of a device, e.g. <c>garge/devices/{deviceId}/#</c>.</summary>
         public static string DeviceWildcard(string deviceId) => $"{Prefix}{deviceId}/#";

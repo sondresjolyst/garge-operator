@@ -1136,6 +1136,26 @@ namespace garge_operator.Services
             await _mqttClient.EnqueueAsync(message);
         }
 
+        public async Task PublishDeviceControlsAsync(string gatewayDeviceName, IReadOnlyList<string> targets)
+        {
+            try
+            {
+                if (!IsValidDeviceId(gatewayDeviceName))
+                {
+                    _logger.LogWarning("Device controls list has an invalid gateway name: {DeviceName}", gatewayDeviceName);
+                    return;
+                }
+
+                var json = JsonSerializer.Serialize(new { controls = targets });
+                await PublishRetainedJsonAsync(GargeTopics.ControlsTopic(gatewayDeviceName), json);
+                _logger.LogDebug("Published {Count} controlled targets for {DeviceName}.", targets.Count, gatewayDeviceName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error publishing device controls for {DeviceName}.", gatewayDeviceName);
+            }
+        }
+
         public async Task HandleDeviceSettingsEventAsync(DeviceSettingsEvent evt)
         {
             try

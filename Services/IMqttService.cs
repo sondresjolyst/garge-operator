@@ -17,4 +17,10 @@ public interface IMqttService
     /// reached nobody.
     /// </summary>
     Task PublishSwitchDataAsync(string topic, string payload, bool force);
+
+    /// <summary>
+    /// Tells one gateway which targets it may act on, retained so it is delivered on subscribe
+    /// rather than only when the list next changes.
+    /// </summary>
+    Task PublishDeviceControlsAsync(string gatewayDeviceName, IReadOnlyList<string> targets);
 }
