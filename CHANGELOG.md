@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/sondresjolyst/garge-operator/compare/v1.11.0...v1.12.0) (2026-10-03)
+
+
+### Features
+
+* redeliver device commands and leave target ACLs to the API ([#226](https://github.com/sondresjolyst/garge-operator/issues/226)) ([d1a78b7](https://github.com/sondresjolyst/garge-operator/commit/d1a78b7ac6e823551e805acee2862451f2b8d414))
+
 ## [1.11.0](https://github.com/sondresjolyst/garge-operator/compare/v1.10.0...v1.11.0) (2026-09-28)
 
 
