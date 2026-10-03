@@ -692,6 +692,34 @@ namespace garge_operator.Services
         private HttpClient CreateApiClient() => _httpClientFactory.CreateClient(GargeApiClient.Authorized);
 
         /// <summary>
+        /// Tells the API what state a device should be in, so a command that reached no gateway
+        /// can be published again. The API ignores a target that is not a discovered device: one
+        /// of those is published to directly and has no lease to wait on.
+        /// </summary>
+        private async Task RecordDesiredStateAsync(string target, string state)
+        {
+            try
+            {
+                var client = CreateApiClient();
+                var response = await HttpJson.PutJsonAsync(
+                    client, $"{_apiBaseUrl}/api/mqtt/devices/{Uri.EscapeDataString(target)}/desired-state",
+                    new { State = state });
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Failed to record desired state for {Target}: StatusCode={StatusCode}",
+                        target, response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                // The command itself is already published; losing the record only costs the
+                // redelivery if it turns out nobody was listening.
+                _logger.LogWarning(ex, "Error recording desired state for {Target}.", target);
+            }
+        }
+
+        /// <summary>
         /// Tells the API what state a device was last seen in, which settles a command waiting on
         /// it. A device with no outstanding command answers 204 and nothing is recorded.
         /// </summary>
@@ -1061,6 +1089,15 @@ namespace garge_operator.Services
 
                 await _mqttClient.EnqueueAsync(message);
                 _logger.LogDebug("Published Switch data to topic '{Topic}': {Payload}", topic, messagePayload);
+
+                // Publishing to a set topic is by definition a command, which is why the intent
+                // is recorded here rather than from the switch-data endpoint: that endpoint also
+                // carries the state devices report back, and the two are indistinguishable there.
+                // A redelivery is not a new command, so it does not reset the intent.
+                if (!force)
+                {
+                    await RecordDesiredStateAsync(switchNameForPublish, normalizedPayload);
+                }
             }
             catch (Exception ex)
             {
