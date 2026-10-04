@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/sondresjolyst/garge-operator/compare/v1.12.0...v1.12.1) (2026-10-04)
+
+
+### Dependencies
+
+* **nuget:** bump `Moq` from 4.20.72 to 4.21.0 ([#229](https://github.com/sondresjolyst/garge-operator/issues/229)) ([83c5a67](https://github.com/sondresjolyst/garge-operator/commit/83c5a67412d32cd9301dd4ee8573a703fd08fee1))
+
 ## [1.12.0](https://github.com/sondresjolyst/garge-operator/compare/v1.11.0...v1.12.0) (2026-10-03)
 
 
