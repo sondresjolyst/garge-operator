@@ -22,6 +22,9 @@ updates:
       patterns:
       - Microsoft.AspNetCore.*
       - Microsoft.EntityFrameworkCore*
+      - xunit*
+      - Microsoft.NET.Test.Sdk
+      - Microsoft.Extensions.TimeProvider.Testing
     skiasharp:
       patterns:
       - SkiaSharp
