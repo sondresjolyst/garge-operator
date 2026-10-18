@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.2](https://github.com/sondresjolyst/garge-operator/compare/v1.12.1...v1.12.2) (2026-10-18)
+
+
+### Dependencies
+
+* **nuget:** bump `xunit.v3` from 4.0.1 to 4.0.2 ([#231](https://github.com/sondresjolyst/garge-operator/issues/231)) ([847e0f8](https://github.com/sondresjolyst/garge-operator/commit/847e0f8b432c564048d7eae9a143f03df04aa474))
+
 ## [1.12.1](https://github.com/sondresjolyst/garge-operator/compare/v1.12.0...v1.12.1) (2026-10-04)
 
 
