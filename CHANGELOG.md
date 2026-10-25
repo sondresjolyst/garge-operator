@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.12.3](https://github.com/sondresjolyst/garge-operator/compare/v1.12.2...v1.12.3) (2026-10-25)
+
+
+### Dependencies
+
+* **nuget:** bump `Microsoft.AspNetCore.SignalR.Client` from 10.0.12 to 10.0.13 ([#236](https://github.com/sondresjolyst/garge-operator/issues/236)) ([9662493](https://github.com/sondresjolyst/garge-operator/commit/966249365ec5bf622e13c1c1212ab78b7ba0cff0))
+* **nuget:** bump `Microsoft.Extensions.Logging.Abstractions` from 10.0.12 to 10.0.13 ([#239](https://github.com/sondresjolyst/garge-operator/issues/239)) ([cb0a6e9](https://github.com/sondresjolyst/garge-operator/commit/cb0a6e982ed3db4ec9e41fb312d9fdfcb2b39731))
+* **nuget:** Bump Microsoft.Extensions.Hosting and Microsoft.Extensions.Logging.Abstractions ([#237](https://github.com/sondresjolyst/garge-operator/issues/237)) ([047ced4](https://github.com/sondresjolyst/garge-operator/commit/047ced4d914970de5c92043bd9fdbd67c7816e71))
+
 ## [1.12.2](https://github.com/sondresjolyst/garge-operator/compare/v1.12.1...v1.12.2) (2026-10-18)
 
 
