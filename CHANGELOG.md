@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.4](https://github.com/sondresjolyst/garge-operator/compare/v1.12.3...v1.12.4) (2026-11-08)
+
+
+### Dependencies
+
+* **docker:** update mcr.microsoft.com/dotnet/aspnet to 1a48394 ([8e1356d](https://github.com/sondresjolyst/garge-operator/commit/8e1356dd9b0a89709fff34643ea92a0198876c07))
+* **docker:** update mcr.microsoft.com/dotnet/sdk to 212fe4c ([8e1356d](https://github.com/sondresjolyst/garge-operator/commit/8e1356dd9b0a89709fff34643ea92a0198876c07))
+* **nuget:** update Microsoft.AspNetCore.SignalR.Client from 10.0.13 to 10.0.14 ([124daa1](https://github.com/sondresjolyst/garge-operator/commit/124daa1a0490d91fc66465cbdfd319bb04b8730a))
+* **nuget:** update Microsoft.Extensions.Hosting from 10.0.13 to 10.0.14 ([124daa1](https://github.com/sondresjolyst/garge-operator/commit/124daa1a0490d91fc66465cbdfd319bb04b8730a))
+* **nuget:** update Microsoft.Extensions.Http from 10.0.12 to 10.0.14 ([124daa1](https://github.com/sondresjolyst/garge-operator/commit/124daa1a0490d91fc66465cbdfd319bb04b8730a))
+* **nuget:** update Microsoft.Extensions.Logging.Abstractions from 10.0.13 to 10.0.14 ([124daa1](https://github.com/sondresjolyst/garge-operator/commit/124daa1a0490d91fc66465cbdfd319bb04b8730a))
+
 ## [1.12.3](https://github.com/sondresjolyst/garge-operator/compare/v1.12.2...v1.12.3) (2026-10-25)
 
 
