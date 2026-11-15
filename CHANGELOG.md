@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.5](https://github.com/sondresjolyst/garge-operator/compare/v1.12.4...v1.12.5) (2026-11-15)
+
+
+### Dependencies
+
+* **docker:** update mcr.microsoft.com/dotnet/aspnet from 1a48394 to bfd912c ([7e36a89](https://github.com/sondresjolyst/garge-operator/commit/7e36a89e260d7c701fca3cae39b85776dd379218))
+* **docker:** update mcr.microsoft.com/dotnet/sdk from 212fe4c to fe0fd4e ([7e36a89](https://github.com/sondresjolyst/garge-operator/commit/7e36a89e260d7c701fca3cae39b85776dd379218))
+
 ## [1.12.4](https://github.com/sondresjolyst/garge-operator/compare/v1.12.3...v1.12.4) (2026-11-08)
 
 
