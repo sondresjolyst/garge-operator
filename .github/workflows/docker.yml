@@ -50,7 +50,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: equinor/ops-actions/.github/workflows/docker.yml@dae4f55b517888e44a342a5f7d3dfac40580a127 # v9.44.0
+    uses: equinor/ops-actions/.github/workflows/docker.yml@9f888bd4522bcfaf0cce912c78507079dcd0fc27 # v9.44.1
     secrets:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     with:
