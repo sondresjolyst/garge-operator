@@ -7,7 +7,7 @@ automation rule triggers.
 
 ## Stack
 
-.NET 10 worker service, MQTTnet, SignalR client, Serilog.
+.NET 11 worker service, MQTTnet, SignalR client, Serilog.
 
 ## Quick start
 
