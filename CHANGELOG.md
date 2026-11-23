@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.12.6](https://github.com/sondresjolyst/garge-operator/compare/v1.12.5...v1.12.6) (2026-11-22)
+
+
+### Dependencies
+
+* **docker:** update mcr.microsoft.com/dotnet/aspnet from bfd912c to 12b1135 ([f225c8c](https://github.com/sondresjolyst/garge-operator/commit/f225c8cc6800b3c34b622aeef4aa534ddd3b9906))
+* **docker:** update mcr.microsoft.com/dotnet/sdk from fe0fd4e to bef136a ([f225c8c](https://github.com/sondresjolyst/garge-operator/commit/f225c8cc6800b3c34b622aeef4aa534ddd3b9906))
+* **dotnet:** upgrade to .net 11 ([#267](https://github.com/sondresjolyst/garge-operator/issues/267)) ([5d2a75e](https://github.com/sondresjolyst/garge-operator/commit/5d2a75e216327e5e6a7292d30971c502cac7110e))
+* **nuget:** update Microsoft.AspNetCore.SignalR.Client from 10.0.14 to 10.0.15 ([ceec6f5](https://github.com/sondresjolyst/garge-operator/commit/ceec6f51d698319e6be399628e147eb3290bf001))
+* **nuget:** update Microsoft.Extensions.Hosting from 10.0.14 to 10.0.15 ([ceec6f5](https://github.com/sondresjolyst/garge-operator/commit/ceec6f51d698319e6be399628e147eb3290bf001))
+* **nuget:** update Microsoft.Extensions.Http from 10.0.14 to 10.0.15 ([ceec6f5](https://github.com/sondresjolyst/garge-operator/commit/ceec6f51d698319e6be399628e147eb3290bf001))
+* **nuget:** update Microsoft.Extensions.Logging.Abstractions from 10.0.14 to 10.0.15 ([ceec6f5](https://github.com/sondresjolyst/garge-operator/commit/ceec6f51d698319e6be399628e147eb3290bf001))
+* **nuget:** update xunit.v3 from 4.0.2 to 4.0.3 ([ceec6f5](https://github.com/sondresjolyst/garge-operator/commit/ceec6f51d698319e6be399628e147eb3290bf001))
+
 ## [1.12.5](https://github.com/sondresjolyst/garge-operator/compare/v1.12.4...v1.12.5) (2026-11-15)
 
 
